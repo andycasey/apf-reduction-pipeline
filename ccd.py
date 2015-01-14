@@ -20,43 +20,6 @@ from astropy.nddata import NDData, FlagCollection
 # Create logger
 logger = logging.getLogger(__name__)
 
-def _parse_overscan_shape(rows, columns):
-    if rows == 0 and columns == 0:
-        return (0, 0)
-
-    if rows == 0 and columns > 0:
-        return (-1, columns)
-
-    if rows > 0 and columns == 0:
-        return (rows, -1)
-
-    if rows > 0 and columns > 0:
-        return (rows, columns)
-
-
-def _parse_iraf_style_section(header_string):
-    """
-    Parse IRAF/NOAO-style data sections to Python indices.
-
-    :param header_string:
-        The IRAF/NOAO-style data section string (e.g., [1:2048,1:4608]).
-
-    :type header_string:
-        str
-    """
-
-    indices = []
-    dimensions = header_string.strip("[] ").split(",")
-    for dimension in dimensions:
-        start_pixel, end_pixel = map(int, dimension.split(":"))
-
-        # These pixels are inclusively marked.
-        start_index, end_index = start_pixel - 1, end_pixel
-        indices.append([start_index, end_index])
-
-    # IRAF/NOAO give the image shape the wrong way around
-    return indices[::-1]
-
 
 class CCD(NDData):
 
@@ -149,12 +112,12 @@ class CCD(NDData):
             # No overscan; perhaps it's already been subtracted?
             return self
 
+        # We'll need these.
         data_shape = self.meta["_data_shape"]
         overscan_shape = self.meta["_overscan_shape"]
 
         # Slicing complex Flags is currently not implemented in NDData, so we
         # will have to slice on the .data attribute:
-        # overscan = self[self.flags["overscan"]]
         overscan = self.data[self.flags["overscan"]].reshape(overscan_shape)
 
         # Make the overscan correction
@@ -173,46 +136,58 @@ class CCD(NDData):
         return self
 
 
+def _parse_overscan_shape(rows, columns):
+    """
+    Parse the number of overscan rows and columns into indices that can be used
+    to reshape arrays.
+
+    :param rows:
+        The number of overscan rows.
+
+    :type rows:
+        int
+
+    :param columns:
+        The number of overscan columns.
+
+    :type columns:
+        int
+    """
+
+    if rows == 0 and columns == 0:
+        return (0, 0)
+
+    if rows == 0 and columns > 0:
+        return (-1, columns)
+
+    if rows > 0 and columns == 0:
+        return (rows, -1)
+
+    if rows > 0 and columns > 0:
+        return (rows, columns)
 
 
+def _parse_iraf_style_section(header_string):
+    """
+    Parse IRAF/NOAO-style data sections to Python indices.
 
+    :param header_string:
+        The IRAF/NOAO-style data section string (e.g., [1:2048,1:4608]).
 
+    :type header_string:
+        str
+    """
 
+    indices = []
+    dimensions = header_string.strip("[] ").split(",")
+    for dimension in dimensions:
+        start_pixel, end_pixel = map(int, dimension.split(":"))
 
+        # These pixels are inclusively marked.
+        start_index, end_index = start_pixel - 1, end_pixel
+        indices.append([start_index, end_index])
 
-
-
-
-
-
-
-
-
-
-
-class ArcFrame(CCD):
-    pass
-
-class FlatFieldFrame(CCD):
-
-    def normalise(self, trace_info):
-        pass
-
-
-def aggregate_image_types(filenames):
-    # Load the filenames,
-    # return a dictionary where keys are the obstypes, filenames as values
-
-    pass
-
-class ScienceFrame(CCD):
-
-    def trace(self):
-        # trace orders
-        raise NotImplementedError
-
-
-    def extract(self, wavelength_calibration=None):
-        raise NotImplementedError
+    # IRAF/NOAO give the image shape the wrong way around
+    return indices[::-1]
 
 
