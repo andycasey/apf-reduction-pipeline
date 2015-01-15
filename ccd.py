@@ -14,7 +14,7 @@ import logging
 # Third-party
 import astropy.units as u
 import numpy as np
-import pyfits
+from astropy.io import fits
 from astropy.nddata import NDData, FlagCollection
 
 # Create logger
@@ -27,8 +27,7 @@ class CCD(NDData):
 
         super(CCD, self).__init__(data, **kwargs)
 
-        # Assume it's all data and set overscan/data flags appropriately
-        #self.data = data
+        # Assume it's all data and set overscan/data flags appropriately.
         self.flags = FlagCollection(shape=data.shape)
         self.flags["data"] = np.ones(data.shape, dtype=bool)
         self.flags["overscan"] = np.zeros(data.shape, dtype=bool)
@@ -62,7 +61,7 @@ class CCD(NDData):
 
         live_dangerously = kwargs.pop("live_dangerously", False)
         expected_obstype = kwargs.pop("expected_obstype", None)
-        with pyfits.open(filename) as image:
+        with fits.open(filename) as image:
 
             header = image[0].header
             obstype = header.get("OBSTYPE", None)
@@ -140,11 +139,11 @@ class CCD(NDData):
         if os.path.exists(filename) and not clobber:
             raise ValueError("file exists and we were told not to clobber it")
 
-        header = pyfits.Header()
+        header = fits.Header()
         header.update(self.meta)
 
-        hdu = pyfits.PrimaryHDU(self.data, header=header)
-        hdu_list = pyfits.HDUList([hdu])
+        hdu = fits.PrimaryHDU(self.data, header=header)
+        hdu_list = fits.HDUList([hdu])
         hdu_list.writeto(filename)
 
 
@@ -226,8 +225,9 @@ def combine_data(frames, method="median", **kwargs):
     func = np.median if method == "median" else np.mean
     combined_data = CCD(func(data, axis=0))
     combined_data.meta = frames[0].meta.copy()
-    combined_data.meta["_filename"] = "Combined [{0}] from {1}".format(method,
-        "|".join(map(str, [_.meta.get("_filename", None) for _ in frames])))
+    combined_data.meta["_filename"] = "Combined from existing files."
+    #combined_data.meta["_filename"] = "Combined [{0}] from {1}".format(method,
+    #    "|".join(map(str, [_.meta.get("_filename", None) for _ in frames])))
 
     return combined_data
 
