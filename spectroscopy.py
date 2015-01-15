@@ -32,7 +32,7 @@ class SpectroscopicFrame(CCD):
     This class inherits from CCD, but has spectroscopy-related functionality.
     """
 
-    def _identify_initial_apertures(self, axis, slice_index, **kwargs):
+    def _identify_initial_apertures_old(self, axis, slice_index, **kwargs):
         """
         Make an initial guess of the positions of apertures in the frame.
 
@@ -64,36 +64,75 @@ class SpectroscopicFrame(CCD):
         # [TODO]
 
         # Identify regions above some threshold.
-        sigma_threshold = kwargs.pop("sigma_threshold", 2)
+        sigma_detect_threshold = kwargs.pop("sigma_detect_threshold", 0.2)
         sigma = (data_slice - np.nanmedian(data_slice))/np.nanstd(data_slice)
-        indices = np.where(sigma > sigma_threshold)[0]
+        indices = np.where(sigma > sigma_detect_threshold)[0]
 
         # Group neighbouring pixels and find the pixel mid-point of those groups
         groups = np.array_split(indices, np.where(np.diff(indices) != 1)[0] + 1)
         aperture_midpoints = np.array(map(np.mean, groups))
+        
+        sigma_remove_threshold = kwargs.pop("sigma_remove_threshold", 3)
+        while True:
+            # Remove outliers
+            aperture_sep = np.diff(aperture_midpoints)
+            median_aperture_sep = np.median(aperture_sep)
 
-        # We might have missed some order, so get the median separation.
-        aperture_sep = np.diff(aperture_midpoints)
-        median_aperture_sep = np.median(aperture_sep)
+            sigmas = (aperture_sep - median_aperture_sep)/np.std(aperture_sep)
+            indices = sigma_remove_threshold > np.abs(sigmas)
+            if np.all(indices):
+                break
+            aperture_midpoints = aperture_midpoints[indices]
 
-        # Find apertures that we missed.
-        missed_aperture_threshold = kwargs.pop("missed_aperture_threshold", 1)
-        sigmas = (aperture_sep - median_aperture_sep)/np.std(aperture_sep)
-        missed_indices = np.where(sigmas > missed_aperture_threshold)[0]
 
-        # Add in the ones we missed. For each point we want to approximately
-        # how many nearby ones were missed. For example, we could miss 3 in a
-        # row, so we should know about that.
-        for index in missed_indices:
-            distance = np.round(aperture_sep[index] / median_aperture_sep)
-            aperture_midpoints = np.append(aperture_midpoints, np.arange(
-                aperture_midpoints[index], aperture_midpoints[index+1], 
-                aperture_sep[index] / distance)[1:])
+        if False:
+        
+            # We might have missed some order, so get the median separation.
+            missed_aperture_threshold = kwargs.pop("missed_aperture_threshold", 1)
+            sigmas = (aperture_sep - median_aperture_sep)/np.std(aperture_sep)
+            missed_indices = np.where(sigmas > missed_aperture_threshold)[0]
+
+            # Add in the ones we missed. For each point we want to approximately
+            # how many nearby ones were missed. For example, we could miss 3 in a
+            # row, so we should know about that.
+            for index in missed_indices:
+                distance = np.round(aperture_sep[index] / median_aperture_sep)
+                aperture_midpoints = np.append(aperture_midpoints, np.arange(
+                    aperture_midpoints[index], aperture_midpoints[index+1], 
+                    aperture_sep[index] / distance)[1:])
 
         return aperture_midpoints
 
 
+
     def _fit_aperture(self, axis, slice_index, peak_index, aperture_width, **p0):
+        """
+        Fit an aperture slice with a Gaussian profile and some background.
+
+        :param axis:
+            The axis to slice across the apertures.
+
+        :type axis:
+            int
+
+        :param slice_index:
+            The index to slice across the `axis`.
+
+        :type slice_index:
+            int
+
+        :param peak_index:
+            The approximate sub-pixel point where the aperture peak is located.
+
+        :type peak_index:
+            float
+
+        :param aperture_width:
+            The approximate width between aperture peaks in pixels.
+
+        :type aperture_width:
+            float
+        """
 
         indices = (
             peak_index - aperture_width/2.,

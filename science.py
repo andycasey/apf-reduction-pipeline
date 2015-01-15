@@ -100,13 +100,17 @@ class ScienceFrame(SpectroscopicFrame):
         # Take a slice down the middle and identify all the peak points
         index = self.data.shape[axis]/2
         aperture_midpoints = self._identify_initial_apertures(axis, index)
-        aperture_width = np.diff(aperture_midpoints).mean()
+        aperture_width = np.median(np.diff(aperture_midpoints))
 
         # Fit the apertures and refine the midpoints.
         apertures = []
         for midpoint in aperture_midpoints:
             apertures.append(self._fit_aperture(axis, index, midpoint,
                 aperture_width))
+
+        # Grow the apertures outwards.
+        # at the left most aperture, subtract the aperture width then fit a profile
+        # do it again, and again, until some threshold (perhaps profile integral)
 
 
 
