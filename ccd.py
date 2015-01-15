@@ -23,8 +23,27 @@ logger = logging.getLogger(__name__)
 
 class CCD(NDData):
 
+    def __init__(self, data, **kwargs):
+
+        super(CCD, self).__init__(data, **kwargs)
+
+        # Assume it's all data and set overscan/data flags appropriately
+        #self.data = data
+        self.flags = FlagCollection(shape=data.shape)
+        self.flags["data"] = np.ones(data.shape, dtype=bool)
+        self.flags["overscan"] = np.zeros(data.shape, dtype=bool)
+
+        # Set metadata that we'll need.
+        self.meta["_filename"] = None
+        self.meta["_data_shape"] = data.shape
+        self.meta["_overscan_shape"] = (0, 0)
+
+        self.__header_keys = ("RA", "DEC", "OBJECT", "OBSTYPE", "EXPTIME",
+            "DATE-OBS", "DATASEC", "ROVER", "COVER")
+
+
     @classmethod
-    def load(cls, filename, data_index=0, **kwargs):
+    def from_filename(cls, filename, data_index=0, **kwargs):
         """
         Create a CCD instance from the data contained in the given filename.
 
@@ -58,8 +77,7 @@ class CCD(NDData):
 
             # Pass some meta-data from the header
             ccd.meta["_filename"] = filename
-            _ = ("RA", "DEC", "OBJECT", "OBSTYPE", "EXPTIME", "DATE-OBS")
-            for key in kwargs.pop("header_keys", _):
+            for key in kwargs.pop("header_keys", ccd.__header_keys):
                 ccd.meta[key] = header.get(key, None)
 
             # Set the flags for data sections and overscan
@@ -102,6 +120,34 @@ class CCD(NDData):
         return ccd
         
 
+    def writeto(self, filename, clobber=False):
+        """
+        Write the CCD frame to a filename.
+
+        :param filename:
+            The output filename.
+
+        :type filename:
+            str
+
+        :param clobber: [optional]
+            Overwrite the filename if it already exists.
+
+        :type clobber:
+            bool
+        """
+
+        if os.path.exists(filename) and not clobber:
+            raise ValueError("file exists and we were told not to clobber it")
+
+        header = pyfits.Header()
+        header.update(self.meta)
+
+        hdu = pyfits.PrimaryHDU(self.data, header=header)
+        hdu_list = pyfits.HDUList([hdu])
+        hdu_list.writeto(filename)
+
+
     def subtract_overscan(self):
         """
         Subtract the median of any overscan region in the CCD, and return just
@@ -134,6 +180,56 @@ class CCD(NDData):
         self.meta["reduction_log"] = "Overscan corrected."
 
         return self
+
+
+def combine_data(frames, method="median", **kwargs):
+    """
+    Combine the data sections in multiple CCD frames. Note that this method will
+    discard overscan regions, and it is possible that not all meta-data keys
+    will be merged correctly.
+
+    :param frames:
+        The list of CCD frames with data sections to combine.
+
+    :type frames:
+        list
+
+    :param method: [optional]
+        The combination method to use. Available methods are median (default) or
+        average.
+
+    :type method:
+        str
+
+    :returns:
+        A single CCD frame with a combined data section. 
+    """
+
+    method = method.lower()
+    if method not in ("median", "average"):
+        raise ValueError("method must be either median or average")
+
+    # Check the frames are the same data shape
+    shapes = list(set(_.meta["_data_shape"] for _ in frames))
+    if len(shapes) > 1:
+        raise ValueError("frames have mis-matching data shapes: {0}".format(
+            " and ".join(map(str, shapes))))
+
+    # [TODO] Check they are the same type?
+
+    # Combine the data
+    stack_shape = (len(frames), ) + shapes[0]
+    data = np.zeros(stack_shape)
+    for i, f in enumerate(frames):
+        data[i][:] = f.data[f.flags["data"]].reshape(f.meta["_data_shape"])
+
+    func = np.median if method == "median" else np.mean
+    combined_data = CCD(func(data, axis=0))
+    combined_data.meta = frames[0].meta.copy()
+    combined_data.meta["_filename"] = "Combined [{0}] from {1}".format(method,
+        "|".join(map(str, [_.meta.get("_filename", None) for _ in frames])))
+
+    return combined_data
 
 
 def _parse_overscan_shape(rows, columns):
