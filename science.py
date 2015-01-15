@@ -27,136 +27,226 @@ def ApertureProfile(x, b=0., mean=0., stddev=0.05, amplitude=1.):
            models.Gaussian1D.eval(x, mean=mean, stddev=stddev, \
                 amplitude=amplitude)
 
-"""
-
-
-        # Now let's fit the actual apertures to refine the peak points and then
-        # we will gradually grow the apertures outwards until we can't find any
-        # more.
-        d = int(aperture_midpoints[0])
-        indices = (d - int(median_aperture_sep)/2,
-            d + int(median_aperture_sep)/2 + 1)
-
-        x = np.arange(*indices)
-        y = data_slice[slice(*indices)]
-
-        g = ApertureProfile()
-        default_p0 = dict(b=min(y), amplitude=max(y), stddev=1., mean=np.mean(x))
-
-        for k, v in default_p0.items():
-            setattr(g, k, v)
-
-        fit = fitting.LevMarLSQFitter()
-        something = fit(g, x, y)
-
-
-        # Move outwards to identify other potential apertures that didn't meet
-        # our initial threshold.
-        grow = kwargs.pop("num_apertures_grow", 3)
-        aperture_midpoints = np.sort(aperture_midpoints)
-        aperture_sep = np.diff(aperture_midpoints)
-
-        lhs_midpoints = np.arange(aperture_midpoints[0] % aperture_sep[0], 
-            aperture_midpoints[0], aperture_sep[0])[-grow:]
-
-        rhs_midpoints = np.arange(aperture_midpoints[-1] + aperture_sep[-1],
-            data_slice.size, aperture_sep[-1])[:grow]
-
-        possible_midpoints = np.append(lhs_midpoints, rhs_midpoints)
-
-        # Exclude the midpoint range that we already have
-        #exclude = (aperture_midpoints[-1] >= possible_midpoints) \
-        #    * (possible_midpoints >= aperture_midpoints[0])
-        #possible_midpoints = possible_midpoints[~exclude]
-
-        import matplotlib.pyplot as plt
-        fig, ax = plt.subplots()
-        ax.plot(data_slice, 'k')
-
-        for midpoint in aperture_midpoints:
-            ax.axvline(midpoint, c='b')
-
-        for possible_midpoint in possible_midpoints:
-            ax.axvline(possible_midpoint, c='r')
-
-        ax.plot(x, y, c='g')
-
-        ax.set_xlim(0, data_slice.size)
-        ax.set_ylim(0, data_slice.max())
-
-        plt.show()
-        raise a
-
-"""
-
 
 
 class ScienceFrame(SpectroscopicFrame):
 
 
-    def trace_apertures(self, axis=0):
-        # trace orders -- interactively?
+    def trace_aperture(self, aperture, slice_index=None, row_rate_limit=1):
+        """
+        Trace an aperture along the CCD.
+
+        :param aperture:
+            The aperture fit from a slice on the CCD.
+
+        :type aperture:
+            :class:`~astropy.modeling.Model`
+
+        :param slice_index: [optional]
+            The index that the aperture was measured along. If not provided, the
+            aperture is assumed to be measured at the mid-plane of the CCD.
+
+        :type slice_index:
+            int
+
+        :param row_rate_limit: [optional]
+            Limit the difference between column aperture fits. This value is 
+            multiplied by the `aperture.stddev` and if the difference between
+            successive rows is greater than `row_rate_limit * aperture.stddev`
+            then the aperture peak is temporarily rate-limited. Set this value
+            to be low if you are seeing traces "jump" between apertures.
+
+        :type row_rate_limit:
+            float
+        """
+
+        # If no slice index was provided, let's assume it was measured at the
+        # CCD mid-plane.
+        slice_index = self.data.shape[0]/2 if slice_index is None \
+            else int(slice_index)
+
+        row_rate_limit = float(row_rate_limit)
+        if 0 >= row_rate_limit:
+            raise ValueError("row rate limit must be positive")
+
+        aperture_width = aperture.stddev * 2. * 3 # 3 sigma either side.
+        aperture_position = np.nan * np.ones(self.data.shape[0])
+        aperture_position[slice_index] = aperture.mean.value
+
+        # Shake it up.
+        differences = np.zeros(self.data.shape[0])
+        for i in np.arange(slice_index + 1, self.data.shape[0]):
+            previous_mean = aperture_position[i - 1]
+
+            x, row_aperture = self._fit_aperture(i, int(previous_mean),
+                aperture_width, stddev=aperture.stddev)
+
+            differences[i] = row_aperture.mean - previous_mean
+            if abs(differences[i]) >= row_rate_limit * aperture.stddev:
+                aperture_position[i] = previous_mean
+            else:
+                aperture_position[i] = row_aperture.mean.value
+
+        # Shake it down.
+        for i in np.arange(0, slice_index)[::-1]:
+            previous_mean = aperture_position[i + 1]
+
+            x, row_aperture = self._fit_aperture(i, int(previous_mean),
+                aperture_width, stddev=aperture.stddev)
+
+            differences[i] = row_aperture.mean - previous_mean
+            if abs(differences[i]) >= row_rate_limit * aperture.stddev:
+                aperture_position[i] = previous_mean
+            else:
+                aperture_position[i] = row_aperture.mean.value
+
+        return aperture_position
+
+
+    def trace_apertures(self):
+
+        # Fit aperture at the mid-plane.
+        index = self.data.shape[0]/2
+        apertures = self.fit_apertures(index)
+
+
+        # Move the trace up and down, searching within nearby pixels.
+
+        num_apertures = len(apertures)
+        aperture_means = np.nan*np.ones((self.data.shape[0], num_apertures))
+        aperture_means[index, :] = [_[1].mean.value for _ in apertures]
+
+        aperture_width = np.diff(aperture_means[index, :]).min()
+
+        # Shake it down.
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots(ncols=2, sharex=True, sharey=True)
+        ax[0].imshow(self.data, cmap=plt.cm.Greys_r, vmin=0, vmax=1500, aspect="auto")
+        ax = ax[1]
+        ax.imshow(self.data, cmap=plt.cm.Greys_r, vmin=0, vmax=1500, aspect="auto")
+        ax.set_color_cycle(["r", "b"])
+
+        rate_limit = 2.5 # pixels per rate_pixels
+        rate_pixels = 10
+
+        for i in range(num_apertures):
+
+            for j in np.arange(0, index)[::-1]:
+
+                previous_mean = aperture_means[j + 1, i]
+                print("j = {0}, previous mean was {1}".format(j, previous_mean))
+
+    
+                k = np.arange(self.data[j].size).searchsorted([
+                    previous_mean - aperture_width/4.,
+                    previous_mean + aperture_width/4.])
+
+                new_mean = np.argmax(self.data[j, k[0]:k[1]]) + k[0]
+
+                # rate limit the mean?
+                rate = abs(np.nansum(np.diff(aperture_means[j:j+rate_pixels, i])))
+                print("RATE {0}".format(rate))
+                if rate >= rate_limit:
+                    new_mean = previous_mean
+
+                print("found max at {0}".format(new_mean))
+
+                if abs(new_mean - previous_mean) > aperture_width/4.:
+                    raise WTFError()
+
+                print("difference was {0}".format(new_mean - previous_mean))
+
+                aperture_means[j, i] = new_mean
+
+            # Shake it up.
+            for j in np.arange(index+1, self.data.shape[0]):
+
+                previous_mean = aperture_means[j - 1, i]
+                print("j = {0}, previous mean was {1}".format(j, previous_mean))
+
+                k = np.arange(self.data[j].size).searchsorted([
+                    previous_mean - aperture_width/4.,
+                    previous_mean + aperture_width/4.])
+
+                print("PIXELS {0}".format(k.size))
+
+                new_mean = np.argmax(self.data[j, k[0]:k[1]]) + k[0]
+                print("found max at {0}".format(new_mean))
+
+                difference = abs(new_mean - previous_mean)
+                if difference > aperture_width/4.:
+                    raise WTFError()
+
+                print("difference was {0}".format(difference))
+
+                aperture_means[j, i] = new_mean
+
+
+            line = aperture_means[:, i]
+            ax.plot(line, np.arange(line.size), c="b")
+            ax.axhline(index, c='k')
+            plt.show()
+
+        ax.set_xlim(-0.5, self.data.shape[1] + 0.5)
+        ax.set_ylim(-0.5, self.data.shape[0] + 0.5)
+
+        raise a
+
+
+
+    def fit_apertures(self, index):
 
         # Take a slice down the middle and identify all the peak points
-        index = self.data.shape[axis]/2
-        aperture_midpoints = self._identify_initial_apertures(axis, index)
+        aperture_midpoints = self._identify_initial_apertures(index)
         aperture_width = np.median(np.diff(aperture_midpoints))
 
         # Fit the apertures and refine the midpoints.
         apertures = []
         for midpoint in aperture_midpoints:
-            apertures.append(self._fit_aperture(axis, index, midpoint,
+            apertures.append(self._fit_aperture(index, midpoint,
                 aperture_width))
 
-        # Grow the apertures outwards.
-        # at the left most aperture, subtract the aperture width then fit a profile
-        # do it again, and again, until some threshold (perhaps profile integral)
+        # Shake it to the left.
+        added_left = 1
+        while True:
 
+            # Project out to the locations of additional apertures
+            aperture_peaks = [_[1].mean.value for _ in apertures]
+            aperture_offsets = np.diff(aperture_peaks)
+            coeffs = np.polyfit(aperture_peaks[:-1], aperture_offsets, 2)
 
+            aperture_width_guess = np.polyval(coeffs, apertures[0][1].mean)
+            if aperture_width_guess < 0: break
 
-        import matplotlib.pyplot as plt
+            midpoint_guess = apertures[0][1].mean - aperture_width_guess
+            x, aperture = self._fit_aperture(index, midpoint_guess,
+                aperture_width_guess)
 
-        full_slice = [int(index) if i == axis else None \
-            for i in range(len(self.data.shape))]
-        data_slice = self.data[full_slice].flatten()
+            if aperture.b > aperture.amplitude: break
+            apertures.insert(0, (x, aperture))
+            added_left += 1
 
-        fig, ax = plt.subplots()
-        ax.plot(data_slice, 'k')
+        # Shake it to the right.
+        added_right = 1
+        while True:
+            # Project out to the locations of additional apertures
+            aperture_peaks = [_[1].mean.value for _ in apertures]
+            aperture_offsets = np.diff(aperture_peaks)
+            coeffs = np.polyfit(aperture_peaks[:-1], aperture_offsets, 2)
 
-        for midpoint, aperture in zip(aperture_midpoints, apertures):
-            ax.axvline(midpoint, c='b')
+            aperture_width_guess = np.polyval(coeffs, apertures[-1][1].mean)
+            if aperture_width_guess < 0: break
 
-            # Get some data around here
-            i = int(midpoint)
-            i = (i - int(aperture_width), i + int(aperture_width) + 1)
-            x = np.arange(*i)
-            ax.plot(x, aperture(x), c='m')
+            midpoint_guess = apertures[-1][1].mean + aperture_width_guess
+            x, aperture = self._fit_aperture(index, midpoint_guess,
+                aperture_width_guess)
 
+            if aperture.b > aperture.amplitude: break
+            apertures.append((x, aperture))
+            added_right += 1
 
-        ax.set_xlim(0, data_slice.size)
-        ax.set_ylim(0, data_slice.max())
-
-        plt.show()
-        raise a
-
-        # Now step outwards and identify new 
-
-
-        # They should be somewhat periodically spaced, or at most linearly
-        # periodic. We need to work out the periodicity and use that to identify
-        # the peaks of the apertures. 
-
-        # Once we have the peaks of the apertures at the mid-plane, we should
-        # bisect the rows and repeatedly do this so that we fully map out how
-        # the apertures move across the CCD
-
-        # When we have the peak apertures at N given points, we should fit
-        # polynomials to all the aperture lines and draw them.
-
-
-
-
-        raise NotImplementedError
+        # Shake it all about.
+        return apertures
 
 
     def extract_apertures(self, wavelength_calibration=None):

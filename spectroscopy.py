@@ -10,7 +10,6 @@ __author__ = "Andy Casey <arc@ast.cam.ac.uk>"
 import logging
 
 # Third-party
-
 from astropy.modeling import models, fitting
 from astropy.modeling.functional_models import custom_model_1d
 import numpy as np
@@ -27,20 +26,15 @@ def ApertureProfile(x, b=0., mean=0., stddev=1., amplitude=1.):
            models.Gaussian1D.eval(x, mean=mean, stddev=stddev, \
                amplitude=amplitude)
 
+
 class SpectroscopicFrame(CCD):
     """
     This class inherits from CCD, but has spectroscopy-related functionality.
     """
 
-    def _identify_initial_apertures_old(self, axis, slice_index, **kwargs):
+    def _identify_initial_apertures(self, slice_index, **kwargs):
         """
         Make an initial guess of the positions of apertures in the frame.
-
-        :param axis:
-            The data axis to search for apertures along.
-
-        :type axis:
-            int
 
         :param slice_index:
             The slice_index of data frame to search along.
@@ -56,15 +50,14 @@ class SpectroscopicFrame(CCD):
         """
 
         # Slice the data at the correct point
-        full_slice = [int(slice_index) if i == axis else None \
-            for i in range(len(self.data.shape))]
-        data_slice = self.data[full_slice].flatten()
+        data_slice = self.data[int(slice_index), None].flatten()
 
         # Assert something about the data slice shape?
         # [TODO]
 
+
         # Identify regions above some threshold.
-        sigma_detect_threshold = kwargs.pop("sigma_detect_threshold", 0.2)
+        sigma_detect_threshold = kwargs.pop("sigma_detect_threshold", 1)
         sigma = (data_slice - np.nanmedian(data_slice))/np.nanstd(data_slice)
         indices = np.where(sigma > sigma_detect_threshold)[0]
 
@@ -105,18 +98,12 @@ class SpectroscopicFrame(CCD):
 
 
 
-    def _fit_aperture(self, axis, slice_index, peak_index, aperture_width, **p0):
+    def _fit_aperture(self, slice_index, peak_index, aperture_width, **p0):
         """
         Fit an aperture slice with a Gaussian profile and some background.
 
-        :param axis:
-            The axis to slice across the apertures.
-
-        :type axis:
-            int
-
         :param slice_index:
-            The index to slice across the `axis`.
+            The index to slice across the axis.
 
         :type slice_index:
             int
@@ -142,9 +129,7 @@ class SpectroscopicFrame(CCD):
 
         # Get the data.
         x = np.arange(*indices)
-        full_slice = [int(slice_index) if i == axis else None \
-            for i in range(len(self.data.shape))]
-        y = self.data[full_slice].flatten()[slice(*indices)]
+        y = self.data[int(slice_index), indices[0]:indices[1]].flatten()
 
         profile_shape = ApertureProfile()
         # The logic for the initial guess of stddev is as follows:
@@ -157,6 +142,6 @@ class SpectroscopicFrame(CCD):
             setattr(profile_shape, k, p0.get(k, v))
 
         fit = fitting.LevMarLSQFitter()
-        return fit(profile_shape, x, y)
+        return x, fit(profile_shape, x, y)
 
 
