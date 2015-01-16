@@ -125,8 +125,9 @@ class SpectroscopicFrame(CCD):
             peak_index - aperture_width/2.,
             peak_index + aperture_width/2. + 1
         )
-        indices = map(int, [np.floor(indices[0]), np.ceil(indices[1])])
-
+        indices = np.clip(map(int, [np.floor(indices[0]), np.ceil(indices[1])]),
+            0, self.data.shape[1])
+        
         # Get the data.
         x = np.arange(*indices)
         y = self.data[int(slice_index), indices[0]:indices[1]].flatten()
@@ -142,6 +143,6 @@ class SpectroscopicFrame(CCD):
             setattr(profile_shape, k, p0.get(k, v))
 
         fit = fitting.LevMarLSQFitter()
-        return x, fit(profile_shape, x, y)
+        return fit(profile_shape, x, y)
 
 
