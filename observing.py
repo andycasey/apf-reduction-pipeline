@@ -45,7 +45,7 @@ def ObservingSequence(filenames, additional_keywords=None, null_value=None):
     if additional_keywords is not None:
         if not isinstance(additional_keywords, (tuple, list)):
             raise TypeError("additional_keywords should be a list or tuple")
-        header_keywords.extend(header_keywords)
+        header_keywords.extend(additional_keywords)
 
     data = []
     for filename in filenames:
