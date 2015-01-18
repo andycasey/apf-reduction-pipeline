@@ -195,6 +195,7 @@ class CCD(NDData):
 
         # Update the metadata
         self.meta["_overscan_shape"] = (0, 0)
+        self.meta["ROVER"], self.meta["COVER"] = 0, 0
         self.meta["reduction_log"] = "Overscan corrected."
 
         return self
