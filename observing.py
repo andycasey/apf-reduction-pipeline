@@ -7,74 +7,55 @@ from __future__ import division, print_function
 __author__ = "Andy Casey <arc@ast.cam.ac.uk>"
 
 # Standard library
-import collections
 import logging
 
 # Third-party
-import numpy as np
-import pyfits
-
-from ccd import CCD
-from arc import ArcFrame
-from flat import FlatFieldFrame
-from science import ScienceFrame
+from astropy.io import fits
+from astropy.table import Table
 
 # Create logger
 logger = logging.getLogger(__name__)
 
 
-class ObservingSequence(collections.MutableSequence):
+_observing_sequence_header_keywords = ["RA", "DEC", "HA", "OBJECT", 
+    "OBSTYPE", "DATE-OBS", "EXPTIME", "DATASEC", "PPRERD", "ROVER", "COVER"]
+def ObservingSequence(filenames, additional_keywords=None, null_value=None):
     """
-    Perhaps this should just read in the files and produce a pandas table/similar
-    with the relevant information that we will need.
+    Create an observing table with relevant header information for a general
+    overview of all the data available.
 
-    Well, we need some way other than loading all the data at once...
+    :param filenames:
+        Filenames of sequentially observed data frames in a given night.
+
+    :type filenames:
+        list of str
+
+    :param additional_keywords: [optional]
+        Additional header keywords to include in the resulting table. By default
+        the header keywords included are: %s
+
+    :type additional_keywords:
+        list of str
+
+    :param null_value: [optional]
+        The value to use when a header keyword is not present in a given file.
     """
 
-    _object_key = "OBJECT"
-    _object_translator = {
-        "ThAr": ArcFrame,
-        "WideFlat": FlatFieldFrame,
-    }
+    header_keywords = [] + _observing_sequence_header_keywords
+    if additional_keywords is not None:
+        if not isinstance(additional_keywords, (tuple, list)):
+            raise TypeError("additional_keywords should be a list or tuple")
+        header_keywords.extend(header_keywords)
 
-    def __init__(self, *args):
-        self.list = list()
-        self.extend(list(args))
-        
-    def parse(self, item):
-        """
-        Load a filename or add a CCD frame.
-        """
+    data = []
+    for filename in filenames:
+        header = fits.getheader(filename)
+        data.append([filename] \
+            + [header.get(k, null_value) for k in header_keywords])
 
-        if isinstance(item, (str, unicode)):
-            # Check the header here and translate to the correct frame.
-            with pyfits.open(item) as image:
-                obstype = image[0].header.get(self._object_key, None)
+    table = Table(map(list, zip(*data)), names=["FILENAME"] + header_keywords,
+        meta={"null_value": null_value})
+    table.sort("DATE-OBS")
+    return table
 
-            # If we don't recognise the header, default to CCD
-            loader_class = self._object_translator.get(obstype, CCD)
-            frame = (item, loader_class)
-
-        else:
-            raise TypeError("item is not a filename")
-        return frame
-
-    def __len__(self):
-        return len(self.list)
-
-    def __getitem__(self, i):
-        return self.list[i]
-
-    def __delitem__(self, i):
-        del self.list[i]
-
-    def __setitem__(self, i, v):
-        self.list[i] = self.parse(v)
-
-    def insert(self, i, v):
-        self.list.insert(i, self.parse(v))
-
-    def __str__(self):
-        return str(self.list)
-
-
+ObservingSequence.__doc__ %= ", ".join(_observing_sequence_header_keywords)
