@@ -7,15 +7,17 @@ from __future__ import division, print_function
 __author__ = "Andy Casey <arc@ast.cam.ac.uk>"
 
 # Standard library
+import logging
 import os
 import sys
-import logging
+from collections import OrderedDict
 
 # Third-party
 import astropy.units as u
 import numpy as np
 from astropy.io import fits
 from astropy.nddata import NDData, FlagCollection
+from scipy.stats import mode
 
 # Create logger
 logger = logging.getLogger(__name__)
@@ -39,6 +41,23 @@ class CCD(NDData):
 
         self.__header_keys = ("RA", "DEC", "OBJECT", "OBSTYPE", "EXPTIME",
             "DATE-OBS", "DATASEC", "ROVER", "COVER")
+
+    @property
+    def imstat(self):
+        """
+        Return statistical properties about the data sections in the CCD.
+        """
+
+        data = self.data[self.flags["data"]]
+        return OrderedDict([
+            ("pixels", data.size),
+            ("non_finite_pixels", (~np.isfinite(data)).sum()),
+            ("mean", np.mean(data)),
+            ("median", np.median(data)),
+            ("stddev", np.std(data)),
+            ("min", np.min(data)),
+            ("max", np.max(data)),
+        ])
 
 
     @classmethod
@@ -144,7 +163,7 @@ class CCD(NDData):
 
         hdu = fits.PrimaryHDU(self.data, header=header)
         hdu_list = fits.HDUList([hdu])
-        hdu_list.writeto(filename)
+        hdu_list.writeto(filename, clobber=clobber)
 
 
     def subtract_overscan(self):
