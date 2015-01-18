@@ -33,8 +33,40 @@ def ApertureProfile(x, b=0., mean=0., stddev=0.05, amplitude=1.):
 class ScienceFrame(SpectroscopicFrame):
 
 
+    def extract_aperture(self, aperture, coefficients, sigma=2., **kwargs):
+        """
+        Extract an aperture and return a Spectrum1D object.
+        """
+
+        live_dangerously = kwargs.pop("live_dangerously", False)
+        if not live_dangerously:
+            assert not np.any(self.flags["overscan"]), "Have you overscan-corrected?"
+
+
+        aperture_width = 2. * sigma * aperture.stddev # N sigma either side
+        y = np.arange(self.data.shape[0])
+        x = np.polyval(coefficients, y)
+
+        x_indices = np.round([
+            x - aperture_width/2.,
+            x + aperture_width/2. + 1]).astype(int).T
+
+        extracted_data = np.zeros(y.size)
+        for yi, xi in zip(y, x_indices):
+            extracted_data[yi] = self.data[yi, slice(*xi)].sum()
+
+        fig, ax = plt.subplots()
+        ax.plot(y, extracted_data, c="k")
+        plt.show()
+
+        raise a
+
 
     def trace_apertures(self, apertures, **kwargs):
+        """
+        Trace apertures across the CCD.
+        """
+
 
         outlier_sigma_threshold = kwargs.pop("outlier_sigma_threshold", 2)
         coefficients = np.array([self.trace_aperture(_, **kwargs) \
@@ -71,10 +103,10 @@ class ScienceFrame(SpectroscopicFrame):
             corrected[index] = True
             outliers[index] = True
 
-        return (coefficients, outliers, corrected)
-
-
-
+        # Only return apertures that are not outliers, or ones that could be 
+        # corrected.
+        return coefficients[corrected | ~outliers]
+        
 
 
     def trace_aperture(self, aperture, slice_index=None, row_rate_limit=1,
@@ -367,7 +399,9 @@ class ScienceFrame(SpectroscopicFrame):
 
 
 
-    def fit_apertures(self, index):
+    def fit_apertures(self, index=None):
+
+        index = self.data.shape[0]/2 if index is None else int(index)
 
         # Take a slice down the middle and identify all the peak points
         aperture_midpoints = self._identify_initial_apertures(index)
