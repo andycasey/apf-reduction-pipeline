@@ -14,6 +14,7 @@ from collections import OrderedDict
 
 # Third-party
 import astropy.units as u
+import cosmics
 import numpy as np
 from astropy.io import fits
 from astropy.nddata import NDData, FlagCollection
@@ -166,6 +167,22 @@ class CCD(NDData):
         hdu_list.writeto(filename, clobber=clobber)
 
 
+    def clean_cosmic_rays(self, gain=1, sigclip=8.0, sigfrac=0.5, objlim=5.0,
+        **kwargs):
+
+        maxiter = kwargs.pop("maxiter", 2)
+        full_output = kwargs.pop("full_output", False)
+        image = cosmics.cosmicsimage(self.data, gain=gain, sigclip=sigclip,
+            sigfrac=sigfrac, objlim=objlim, **kwargs)
+        result = image.run(maxiter=maxiter)
+
+        self.data = image.cleanarray
+
+        if full_output:
+            return (self, image)
+        return self
+
+
     def subtract_overscan(self):
         """
         Subtract the median of any overscan region in the CCD, and return just
@@ -214,8 +231,8 @@ def combine_data(frames, method="median", **kwargs):
         list
 
     :param method: [optional]
-        The combination method to use. Available methods are median (default) or
-        average.
+        The combination method to use. Available methods are median (default),
+        average, or sum.
 
     :type method:
         str
@@ -225,8 +242,8 @@ def combine_data(frames, method="median", **kwargs):
     """
 
     method = method.lower()
-    if method not in ("median", "average"):
-        raise ValueError("method must be either median or average")
+    if method not in ("median", "average", "sum"):
+        raise ValueError("method must be either median, average, or sum")
 
     # Check the frames are the same data shape
     shapes = list(set(_.meta["_data_shape"] for _ in frames))
@@ -242,7 +259,11 @@ def combine_data(frames, method="median", **kwargs):
     for i, f in enumerate(frames):
         data[i][:] = f.data[f.flags["data"]].reshape(f.meta["_data_shape"])
 
-    func = np.median if method == "median" else np.mean
+    func = {
+        "median": np.median,
+        "mean": np.mean,
+        "sum": np.sum
+    }[method]
     combined_data = CCD(func(data, axis=0))
     combined_data.meta = frames[0].meta.copy()
     combined_data.meta["_filename"] = "Combined from existing files."
