@@ -34,7 +34,7 @@ class ScienceFrame(SpectroscopicFrame):
 
 
     def fit_apertures(self, index=None):
-        
+
 
         index = self.data.shape[0]/2 if index is None else int(index)
 
@@ -318,7 +318,7 @@ class ScienceFrame(SpectroscopicFrame):
             float
         """
 
-        outlier_sigma_threshold = kwargs.pop("outlier_sigma_threshold", 2)
+        outlier_sigma_threshold = kwargs.pop("outlier_sigma_threshold", 1.5)
         coefficients = np.array([self.trace_aperture(_, **kwargs) \
             for _ in apertures])
 
@@ -341,6 +341,18 @@ class ScienceFrame(SpectroscopicFrame):
 
             outliers[~outliers] += new_outliers
 
+
+        # Fit polynomials to those that are not outliers
+        degree = 3
+        m_coefficients = np.zeros((degree + 1, coefficients.shape[1]))
+        for i in range(m_coefficients.shape[1]):
+            m_coefficients[:, i] = np.polyfit(x[~outliers],
+                coefficients[~outliers, i], degree)
+
+
+
+
+        """
         # Should we recover outliers that are within the bounds?
         # Yes, yes we should.
         _, __ = np.where(~outliers)[0], np.where(outliers)[0]
@@ -352,11 +364,72 @@ class ScienceFrame(SpectroscopicFrame):
                 coefficients[index, j] = splev(x[index], tck)
             corrected[index] = True
             outliers[index] = True
+        """
+
+
+        """
 
         # Only return apertures that are not outliers, or ones that could be 
         # corrected.
-        return coefficients[corrected | ~outliers]
+        fig, axes = plt.subplots(3)
+        ok = ~outliers
+        for i, ax in enumerate(axes):
+            scale = np.std(coefficients[:, i])
+            mu = np.median(coefficients[:, i])
+            mu, scale = 0, 1
+            ax.scatter(x[outliers], (coefficients[outliers, i] - mu)/scale, facecolor="r")
+            ax.scatter(x[ok], (coefficients[ok, i] - mu)/scale, facecolor="k")
+            #ax.scatter(x[corrected], (coefficients[corrected, i] - mu)/scale, facecolor="g")
+            ax.plot(x, np.polyval(m_coefficients[:, i], x), c="r")
+            #ax.set_ylim(coefficients[:, i].min(), coefficients[:, i].max())
+
+        raise a
+        """
+
+        return np.vstack([np.polyval(m_coefficients[:,i], x) \
+            for i in range(coefficients.shape[1])]).T
+
+        coefficients = coefficients[corrected | ~outliers]
+        if coefficients.shape[0] != len(apertures):
+            logger.warn("Traced {0} apertures, expected to trace {1}".format(
+                coefficients.shape[0], len(apertures)))
+            raise a
+        return coefficients
         
+
+    def _aperture_mask(self, coefficients, widths, discretize="round"):
+
+        coefficients = np.atleast_2d(coefficients)
+        if isinstance(widths, (int, float)):
+            widths = widths * np.ones(coefficients.shape[0])
+        else:
+            widths = np.array(widths)
+            assert widths.size == coefficients.shape[0], ("Widths must be a "\
+                "float or an array the same length as coefficients dim[0]")
+
+        discretize = discretize.lower()
+        if discretize not in ("round", "bounded"):
+            raise ValueError("discretize must be either round or bounded")
+
+        aperture_mask = np.zeros(self.shape, dtype=bool)
+        y = np.arange(self.shape[0])
+        for c, w in zip(coefficients, widths):
+
+            x = np.polyval(c, y)
+            if discretize == "round":
+                xis = np.round([x - w, x + w + 1]).astype(int).T
+
+            elif discretize == "bounded":
+                xis = np.vstack([
+                    np.floor(x - w),
+                    np.ceil(x + w) + 1
+                ]).astype(int).T
+
+            for yi, xi in zip(y, xis):
+                aperture_mask[yi, slice(*xi)] = True
+
+        return aperture_mask
+
 
     def extract_aperture(self, coefficients, width, discretize="round", 
         **kwargs):
@@ -412,7 +485,27 @@ class ScienceFrame(SpectroscopicFrame):
         return extracted_data
         
 
-    def plot_aperture_trace(self, coefficients, width=0, ax=None, **kwargs):
+    def plot_apertures(self, apertures, index=None):
+
+        index = self.data.shape[0]/2 if index is None else int(index)
+
+        data_slice = self.data[int(index), None].flatten()
+        fig, ax = plt.subplots()
+
+        ax.plot(data_slice, c="k")
+
+        stddev = abs(np.median([_.stddev for _ in apertures]))
+        for aperture in apertures:
+            x = np.linspace(
+                aperture.mean - 5 * stddev,
+                aperture.mean + 5 * stddev,
+                100)
+            ax.plot(x, aperture(x), c="r")
+
+        return fig
+
+
+    def plot_aperture_trace(self, coefficients, widths=0, ax=None, **kwargs):
         """
         Plot the aperture trace across the CCD from the coefficients provided.
 
@@ -422,12 +515,12 @@ class ScienceFrame(SpectroscopicFrame):
         :type coefficients:
             :class:`numpy.array`
 
-        :param width: [optional]
-            The width of the aperture trace (in pixels). If provided, then the 
-            plot will show the width of the aperture across the CCD.
+        :param widths: [optional]
+            The widths of the aperture trace (in pixels). If provided, then the 
+            plot will show the widths of the aperture across the CCD.
 
-        :type width:
-            float
+        :type widths:
+            float or :class:`numpy.array`
         """
 
         if ax is None:
@@ -451,16 +544,26 @@ class ScienceFrame(SpectroscopicFrame):
         else:
             fig = ax.figure
 
-        y = np.arange(self.data.shape[0])
-        x = np.polyval(coefficients, y)
-        plot_kwargs = kwargs.copy()
-        plot_kwargs.setdefault("c", "b")
-        ax.plot(x, y, **plot_kwargs)
+        coefficients = np.atleast_2d(coefficients)
+        if isinstance(widths, (int, float)):
+            widths = widths * np.ones(coefficients.shape[0])
 
-        if width > 0:      
-            plot_kwargs["linestyle"] = ":"
-            ax.plot(x - width, y, **plot_kwargs)
-            ax.plot(x + width, y, **plot_kwargs)
+        else:
+            widths = np.array(widths)
+            assert widths.size == coefficients.shape[0], ("Widths must be a "\
+                "float or an array the same length as coefficients dim[0]")
+
+        y = np.arange(self.data.shape[0])
+        for c, w in zip(coefficients, widths):
+
+            x = np.polyval(c, y)
+            ax.plot(x, y, **kwargs)
+
+            if w > 0:      
+                _ = plot_kwargs.copy()
+                _["linestyle"] = ":"
+                ax.plot(x - w, y, **_)
+                ax.plot(x + w, y, **_)
 
         ax.set_xlim(-0.5, self.shape[1] + 0.5)
         ax.set_ylim(-0.5, self.shape[0] + 0.5)
