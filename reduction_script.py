@@ -19,6 +19,8 @@ import pipeline
 # from astropy import specutils
 from oracle import specutils
 
+# Initialise logging
+logger = logging.getLogger("pipeline")
 
 # Let's get an overview of all the data.
 observed_frames = pipeline.observing.sequence(glob("raw_data/apfeng?????.fits"),
@@ -27,11 +29,13 @@ observed_frames = pipeline.observing.sequence(glob("raw_data/apfeng?????.fits"),
 # Options
 clobber = True
 COMBINE_FLATS = False
+
 TRACE_APERTURES = True
-SOLVE_WAVELENGTHS = False
-EXTRACT_SPECTRA = True
 TRACE_FILENAME = "apfeng10070.fits"
 
+SOLVE_WAVELENGTHS = False
+
+EXTRACT_SPECTRA = True
 
 # Flat fields
 flat_field_combination_method = "median"
@@ -59,6 +63,7 @@ if COMBINE_FLATS:
         filename = "reduced_data/{0}-flat-{0}-{1}.fits".format(
             flat_field_combination_method, *image_limits)
         master_flat_filenames.append(filename)
+        logger.info("Saved combined flat to {}".format(filename))
         group_master_flat.writeto(filename, clobber=clobber)
 
         # Create a master flat of all flat fields?
@@ -68,17 +73,22 @@ if COMBINE_FLATS:
             master_flat = pipeline.ccd.combine_data(all_flat_images,
                 method=flat_field_combination_method)
             master_flat.writeto(filename, clobber=clobber)
+            logger.info("Saved master flat to {}".format(filename))
             master_flat_filenames.append(filename)
             del images, all_flat_images
 
     # Normalise the master flat field(s).
     master_flat.data /= master_flat.imstat[flat_field_combination_method]
-    master_flat.writeto("reduced_data/normalised-{}-flat-all.fits".format(
-        flat_field_combination_method), clobber=clobber)
+    filename = "reduced_data/normalised-{}-flat-all.fits".format(
+        flat_field_combination_method)
+    master_flat.writeto(filename, clobber=clobber)
+    logger.info("Saved normalised master flat to {}".format(filename))
 
 else:
-    master_flat = pipeline.CCD.from_filename("reduced_data/normalised-{}-flat-a"
-        "ll.fits".format(flat_field_combination_method))
+    filename = "reduced_data/normalised-{}-flat-all.fits".format(
+        flat_field_combination_method)
+    logger.info("Loading normalised master flat from {}".format(filename))
+    master_flat = pipeline.CCD.from_filename(filename)
 
 
 if TRACE_APERTURES:
@@ -106,14 +116,16 @@ else:
 
 
 if EXTRACT_SPECTRA:
-    extract_apertures = [30]
+    extract_apertures = [20, 21, 22, 23, 40]
     non_science_objects = ("Dark", "Iodine", "NarrowFlat", "ThAr", "WideFlat")
     science_indices = np.where([f not in non_science_objects \
         for f in observed_frames["OBJECT"]])[0]
+
+    median_aperture_stddev = np.median([_.stddev for _ in apertures])
     for row in observed_frames[science_indices]:
 
         # Load the science frame and subtract the overscan
-        science_image = pipeline.CCD.from_filename(row["FILENAME"])
+        science_image = pipeline.ScienceFrame.from_filename(row["FILENAME"])
         science_image = science_image.subtract_overscan()
 
         # Clean the science frames of cosmic rays.
@@ -124,19 +136,24 @@ if EXTRACT_SPECTRA:
 
         # Extract the science spectra that we want.
         for index in extract_apertures:
-            flux = science_image.extract_aperture(apertures[index],
-                coefficients[index])
 
-            # Apply the wavelength calibration
+            # Estimate a width for this aperture.
+            flux = science_image.extract_aperture(coefficients[index],
+                width=2.5 * median_aperture_stddev)
+
+            # Apply the wavelength calibration.
             f = pipeline.arc.wavelength_calibration(wavelength_mapping[index])
             dispersion = f(np.arange(flux.size))
 
-            # Save as spectrum
+            # Save as spectrum.
+            # TODO: oracle.specutils is kinda dumb. ensure all headers are strs
+            k = science_image.meta.keys()
+            str_headers = dict(zip(k, [str(science_image.meta[_]) for _ in k]))
             spectrum = specutils.Spectrum1D(disp=dispersion, flux=flux,
-                headers=dict(science_image.meta))
+                headers=str_headers)
 
             basename, ext = os.path.splitext(os.path.basename(row["FILENAME"]))
-            spectrum.save("reduced_data/{0}_es_{1}.{2}".format(basename, index,
+            spectrum.save("reduced_data/{0}_es_{1:.0f}{2}".format(basename, index,
                 ext), clobber=clobber)
 
     else:

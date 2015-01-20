@@ -9,10 +9,11 @@ __author__ = "Andy Casey <arc@ast.cam.ac.uk>"
 # Standard library
 import logging
 
-from ccd import CCD
+from .ccd import CCD
+from .science import ScienceFrame
+from . import (arc, ccd, observing, science)
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 ch = logging.StreamHandler()
 ch.setLevel(logging.DEBUG)

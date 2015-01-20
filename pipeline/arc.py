@@ -42,11 +42,8 @@ def wavelength_calibration(pixel_dispersion_mapping, order=3):
     pixel_dispersion_mapping = pixel_dispersion_mapping[_]
     coefficients = np.polyfit(pixel_dispersion_mapping[:, 0],
         pixel_dispersion_mapping[:, 1], order)
-    
+
     return lambda x: np.polyval(coefficients, x)
-
-
-
 
 
 

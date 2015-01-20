@@ -459,9 +459,9 @@ class ScienceFrame(SpectroscopicFrame):
             str
         """
 
-        if not np.any(self.flags["overscan"]):
-            logger.warn("Extracting science apertures even though the overscan "
-                "has not been removed.")
+        if np.any(self.flags["overscan"]):
+            logger.warn("Extracting science apertures even though there are "
+                "overscan pixels in the data that have not been removed.")
 
         y = np.arange(self.data.shape[0])
         x = np.polyval(coefficients, y)

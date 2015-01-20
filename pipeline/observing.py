@@ -58,4 +58,4 @@ def sequence(filenames, additional_keywords=None, null_value=None):
     table.sort("DATE-OBS")
     return table
 
-ObservingSequence.__doc__ %= ", ".join(_observing_sequence_header_keywords)
+sequence.__doc__ %= ", ".join(_observing_sequence_header_keywords)
