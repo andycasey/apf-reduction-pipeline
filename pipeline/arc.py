@@ -32,6 +32,23 @@ def EmissionProfile(x, b=0., mean=0., stddev=1., amplitude=1.):
 
 
 
+def wavelength_calibration(pixel_dispersion_mapping, order=3):
+
+    pixel_dispersion_mapping = np.atleast_2d(pixel_dispersion_mapping)
+    if order >= pixel_dispersion_mapping.size:
+        raise ValueError("insufficient points to build a pixel-dispersion map")
+
+    _ = pixel_dispersion_mapping[:, 0].argsort()
+    pixel_dispersion_mapping = pixel_dispersion_mapping[_]
+    coefficients = np.polyfit(pixel_dispersion_mapping[:, 0],
+        pixel_dispersion_mapping[:, 1], order)
+    
+    return lambda x: np.polyval(coefficients, x)
+
+
+
+
+
 
 class WavelengthSolutionFinder(object):
 
@@ -142,12 +159,21 @@ class WavelengthSolutionFinder(object):
 
             print("x2", self._x2)
             print("event", event)
-            i = int(self._x2.searchsorted(event.xdata))
-            if self._x2[0] > self._x2[-1]:
-                i = -int(self._x2[::-1].searchsorted(event.xdata))
 
+            if self._x2[0] > self._x2[-1]:
+                i = data.size - int(self._x2[::-1].searchsorted(event.xdata))
+
+            else:
+                i = int(self._x2.searchsorted(event.xdata))
+            
+            i = np.arange(data.size)[i]
             print("i", i)
-            peak = i - 25 + np.argmax(data[i - 25:26 + i])
+
+            n = 25
+            na, nb = np.clip(i - n, 0, data.size - 1), np.clip(i + n + 1, 0, data.size - 1)
+            subset = np.argmax(data[na:nb])
+
+            peak = subset + na
             peak = np.arange(data.size)[peak]
 
             # Is this line already in the list for this wl?
@@ -316,6 +342,8 @@ class WavelengthSolutionFinder(object):
 
 
     def _check_wavelength_points(self, points):
+
+        return True
 
         points = np.atleast_2d(points)
         if points.size == 0:

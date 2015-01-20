@@ -9,6 +9,8 @@ __author__ = "Andy Casey <arc@ast.cam.ac.uk>"
 # Standard library
 import logging
 
+from ccd import CCD
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 

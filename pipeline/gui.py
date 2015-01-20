@@ -21,7 +21,9 @@ logger = logging.getLogger(__name__)
 
 
 
-def interactively_fit_apertures(frame, vmin=0, vmax=1500):
+def interactively_fit_apertures(frame, vmin=0, vmax=1500, axis=0):
+
+    assert axis in (0, 1)
 
     fig, (image_ax, slice_ax) = plt.subplots(ncols=2)
 
@@ -38,25 +40,33 @@ def interactively_fit_apertures(frame, vmin=0, vmax=1500):
         if event.inaxes != image_ax: return
 
         print("Fitting")
-        y = frame.data[int(event.ydata), :].flatten()
-        x = np.arange(y.size)
+        if axis == 0:
+            index = int(event.ydata)
+            y = frame.data[index, :].flatten()
+            
+        else:
+            index = int(event.xdata)
+            y = frame.data[:, index].flatten()
 
+        x = np.arange(y.size)
         plot_data[0].set_data(np.vstack([x, y]))
         slice_ax.set_xlim(0, y.size)
         slice_ax.set_ylim(y.min(), y.max())
 
-        apertures = obs.fit_apertures(int(event.ydata))
+        if axis == 0:
+            apertures = obs.fit_apertures(index)
 
-        if len(apertures) > len(plot_apertures):
-            plot_apertures.extend([slice_ax.plot([], c="b")[0] \
-                for _ in range(len(apertures) - len(plot_apertures))])
+            if len(apertures) > len(plot_apertures):
+                plot_apertures.extend([slice_ax.plot([], c="b")[0] \
+                    for _ in range(len(apertures) - len(plot_apertures))])
 
-        for i, aperture in enumerate(apertures):
-            x = np.arange(aperture.mean - 10, aperture.mean + 10, 0.01)
-            plot_apertures[i].set_data(np.vstack([x, aperture(x)]))
+            for i, aperture in enumerate(apertures):
+                x = np.arange(aperture.mean - 10, aperture.mean + 10, 0.01)
+                plot_apertures[i].set_data(np.vstack([x, aperture(x)]))
 
-        empty_data = np.nan * np.ones((2,2))
-        [_.set_data(empty_data) for _ in plot_apertures[i+1:]]
+            empty_data = np.nan * np.ones((2,2))
+            [_.set_data(empty_data) for _ in plot_apertures[i+1:]]
+
         fig.canvas.draw()
 
         print('button={0}, x={1}, y={2}, xdata={3}, ydata={4}'.format(

@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 _observing_sequence_header_keywords = ["RA", "DEC", "HA", "OBJECT", 
     "OBSTYPE", "DATE-OBS", "EXPTIME", "DATASEC", "PPRERD", "ROVER", "COVER"]
-def ObservingSequence(filenames, additional_keywords=None, null_value=None):
+def sequence(filenames, additional_keywords=None, null_value=None):
     """
     Create an observing table with relevant header information for a general
     overview of all the data available.
