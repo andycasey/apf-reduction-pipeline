@@ -11,7 +11,7 @@ import logging
 
 from .ccd import CCD
 from .science import ScienceFrame
-from . import (arc, ccd, observing, science)
+from . import (arc, ccd, observing, science, utils)
 
 logger = logging.getLogger(__name__)
 

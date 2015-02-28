@@ -101,9 +101,9 @@ class CCD(NDData):
 
             # Set the flags for data sections and overscan
             # Note that here I just assume that if it's not data, it's overscan.
-            ccd.flags = FlagCollection(shape=ccd.shape)
-            ccd.flags["data"] = np.zeros(ccd.shape, dtype=bool)
-            ccd.flags["overscan"] = np.ones(ccd.shape, dtype=bool)
+            ccd.flags = FlagCollection(shape=ccd.data.shape)
+            ccd.flags["data"] = np.zeros(ccd.data.shape, dtype=bool)
+            ccd.flags["overscan"] = np.ones(ccd.data.shape, dtype=bool)
 
             # Get data region from DATASEC
             if not "DATASEC" in header:
@@ -127,7 +127,7 @@ class CCD(NDData):
                     overscan_rows, overscan_columns)
 
                 flagged_overscan_pixels = (ccd.flags["overscan"] == True).sum()
-                expected_overscan_pixels = np.multiply(ccd.shape,
+                expected_overscan_pixels = np.multiply(ccd.data.shape,
                     (overscan_columns, overscan_rows)).sum()
 
                 if expected_overscan_pixels != flagged_overscan_pixels \
@@ -176,7 +176,7 @@ class CCD(NDData):
             sigfrac=sigfrac, objlim=objlim, **kwargs)
         result = image.run(maxiter=maxiter)
 
-        self.data = image.cleanarray
+        self._data = image.cleanarray
 
         if full_output:
             return (self, image)
@@ -202,7 +202,7 @@ class CCD(NDData):
         overscan = self.data[self.flags["overscan"]].reshape(overscan_shape)
 
         # Make the overscan correction
-        self.data = self.data[self.flags["data"]].reshape(data_shape) \
+        self._data = self.data[self.flags["data"]].reshape(data_shape) \
             - np.median(overscan, axis=1)[:,np.newaxis]
 
         # Update the flags
@@ -265,7 +265,7 @@ def combine_data(frames, method="median", **kwargs):
         "sum": np.sum
     }[method]
     combined_data = CCD(func(data, axis=0))
-    combined_data.meta = frames[0].meta.copy()
+    combined_data._meta = frames[0].meta.copy()
     combined_data.meta["_filename"] = "Combined from existing files."
     #combined_data.meta["_filename"] = "Combined [{0}] from {1}".format(method,
     #    "|".join(map(str, [_.meta.get("_filename", None) for _ in frames])))

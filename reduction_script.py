@@ -14,6 +14,7 @@ from glob import glob
 
 # Third-party
 import numpy as np
+import matplotlib.pyplot as plt
 import pipeline
 
 # from astropy import specutils
@@ -23,15 +24,16 @@ from oracle import specutils
 logger = logging.getLogger("pipeline")
 
 # Let's get an overview of all the data.
-observed_frames = pipeline.observing.sequence(glob("raw_data/apfeng?????.fits"),
+observed_frames = pipeline.observing.sequence(glob("raw_data/rockosi?????.fits"),
     additional_keywords=["ICELNAM", "OMEGAPOW"])
+#observed_frames = pipeline.observing.sequence(glob("raw_data/apfeng*.fits"), additional_keywords=["ICELNAM", "OMEGAPOW"])
 
 # Options
 clobber = True
 COMBINE_FLATS = False
 
 TRACE_APERTURES = True
-TRACE_FILENAME = "apfeng10070.fits"
+TRACE_FILENAME = "rockosi10071.fits"
 
 SOLVE_WAVELENGTHS = False
 
@@ -58,7 +60,7 @@ if COMBINE_FLATS:
             method=flat_field_combination_method)
 
         # Save the master flat with an appropriate name.
-        image_limits = utils.parse_image_limits_from_sequence(
+        image_limits = pipeline.utils.parse_image_limits_from_sequence(
             observed_frames[group_of_sequential_flat_fields]["FILENAME"])
         filename = "reduced_data/{0}-flat-{0}-{1}.fits".format(
             flat_field_combination_method, *image_limits)
@@ -78,7 +80,7 @@ if COMBINE_FLATS:
             del images, all_flat_images
 
     # Normalise the master flat field(s).
-    master_flat.data /= master_flat.imstat[flat_field_combination_method]
+    master_flat._data /= master_flat.imstat[flat_field_combination_method]
     filename = "reduced_data/normalised-{}-flat-all.fits".format(
         flat_field_combination_method)
     master_flat.writeto(filename, clobber=clobber)
@@ -97,14 +99,15 @@ if TRACE_APERTURES:
         TRACE_FILENAME))
     apertures = high_snr_star.fit_apertures()
     coefficients = high_snr_star.trace_apertures(apertures)
+    stddevs = [_.stddev.value for _ in apertures]
 
     with open("reduced_data/apertures_coefficients.pickle", "w") as fp:
-        pickle.dump((apertures, coefficients), fp, -1)
+        pickle.dump((stddevs, coefficients), fp, -1)
 
 else:
     logger.info("Loading apertures from existing file")
     with open("reduced_data/apertures_coefficients.pickle", "r") as fp:
-        apertures, coefficients = pickle.load(fp)
+        stddevs, coefficients = pickle.load(fp)
 
 
 if SOLVE_WAVELENGTHS:
@@ -121,7 +124,7 @@ if EXTRACT_SPECTRA:
     science_indices = np.where([f not in non_science_objects \
         for f in observed_frames["OBJECT"]])[0]
 
-    median_aperture_stddev = np.median([_.stddev for _ in apertures])
+    median_aperture_stddev = np.median(stddevs)
     for row in observed_frames[science_indices]:
 
         # Load the science frame and subtract the overscan
@@ -132,7 +135,7 @@ if EXTRACT_SPECTRA:
         science_image = science_image.clean_cosmic_rays()
 
         # Divide the normalised flat field into the science images.
-        science_image.data /= master_flat.data
+        science_image._data /= master_flat.data
 
         # Extract the science spectra that we want.
         for index in extract_apertures:
@@ -156,8 +159,17 @@ if EXTRACT_SPECTRA:
             spectrum.save("reduced_data/{0}_es_{1:.0f}{2}".format(basename, index,
                 ext), clobber=clobber)
 
-    else:
-        print("No spectra extracted. Nothing left to do.")
-
-
-
+            # Make a plot.
+            fig, ax = plt.subplots()
+            ax.plot(dispersion, flux, c="k")
+            ax.set_xlim(dispersion.min(), dispersion.max())
+            ax.set_ylim(0, np.median(flux) + 3 * np.std(flux))
+            ax.set_xlabel("Wavelength")
+            ax.set_ylabel("Flux")
+            filename = "reduced_data/{0}_es_{1:.0f}.png".format(basename, index)
+            fig.savefig(filename, dpi=150)
+            plt.close("all")
+            logger.info("Saved image to {}".format(filename))
+            
+else:
+    print("No spectra extracted. Nothing left to do.")

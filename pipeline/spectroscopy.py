@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 
 @custom_model_1d
 def ApertureProfile(x, b=0., mean=0., stddev=1., amplitude=1.):
-    return models.Linear1D.eval(x, slope=0., intercept=b) + \
-           models.Gaussian1D.eval(x, mean=mean, stddev=stddev, \
+    return models.Linear1D.evaluate(x, slope=0., intercept=b) + \
+           models.Gaussian1D.evaluate(x, mean=mean, stddev=stddev, \
                amplitude=amplitude)
 
 
