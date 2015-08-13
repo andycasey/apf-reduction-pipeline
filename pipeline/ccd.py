@@ -10,7 +10,7 @@ __author__ = "Andy Casey <arc@ast.cam.ac.uk>"
 import logging
 import os
 import sys
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 
 # Third-party
 import astropy.units as u
@@ -18,12 +18,11 @@ import cosmics
 import numpy as np
 from astropy.io import fits
 from astropy.nddata import NDData, FlagCollection
-from scipy.stats import mode
 
 # Create logger
 logger = logging.getLogger(__name__)
 
-
+    
 class CCD(NDData):
 
     def __init__(self, data, **kwargs):
@@ -55,10 +54,19 @@ class CCD(NDData):
             ("non_finite_pixels", (~np.isfinite(data)).sum()),
             ("mean", np.mean(data)),
             ("median", np.median(data)),
+            ("mode", mode(data)),
             ("stddev", np.std(data)),
             ("min", np.min(data)),
             ("max", np.max(data)),
         ])
+
+
+    @property
+    def shape(self):
+        """
+        Return the data shape.
+        """
+        return self._data.shape
 
 
     @classmethod
@@ -216,6 +224,36 @@ class CCD(NDData):
         self.meta["reduction_log"] = "Overscan corrected."
 
         return self
+
+
+    def normalise(self, method="mode", **kwargs):
+        """
+        Normalise the image.
+        """
+
+        if method == "percentile":
+            percentile = kwargs.pop("percentile", 99.9)
+            min_value = kwargs.pop("min_value", 0)
+
+            # Clip zeros.
+            self._data[self._data < min_value] = min_value
+
+            # Normalise to the percentile.
+            maximum = np.percentile(self._data, [percentile])[0]
+
+            self._data /= maximum
+
+        elif method == "mode":
+
+            # Clip zeros.
+            min_value = kwargs.pop("min_value", 0)
+            self._data[self._data < min_value] = min_value
+
+            # Normalise to the mode.
+            self._data /= Counter(self._data.flatten()).most_common(1)[0][0]
+
+        return self
+
 
 
 def combine_data(frames, method="median", **kwargs):
