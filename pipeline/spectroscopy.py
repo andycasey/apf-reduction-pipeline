@@ -21,10 +21,15 @@ logger = logging.getLogger(__name__)
 
 
 @custom_model_1d
-def ApertureProfile(x, b=0., mean=0., stddev=1., amplitude=1.):
+def ApertureProfile(x, b=0., mean=0., width=1., amplitude=1.):
     return models.Linear1D.evaluate(x, slope=0., intercept=b) + \
-           models.Gaussian1D.evaluate(x, mean=mean, stddev=stddev, \
+           models.Gaussian1D.evaluate(x, mean=mean, stddev=width, \
                amplitude=amplitude)
+
+@custom_model_1d
+def BoxProfile(x, b=0., mean=0., width=1., amplitude=1.):
+    return models.Linear1D.evaluate(x, slope=0., intercept=b) + \
+        models.Box1D.evaluate(x, x_0=mean, width=width, amplitude=amplitude)
 
 
 class SpectroscopicFrame(CCD):
@@ -98,7 +103,8 @@ class SpectroscopicFrame(CCD):
 
 
 
-    def _fit_aperture(self, slice_index, peak_index, aperture_width, **p0):
+    def _fit_aperture(self, slice_index, peak_index, aperture_width, profile,
+        **p0):
         """
         Fit an aperture slice with a Gaussian profile and some background.
 
@@ -132,12 +138,20 @@ class SpectroscopicFrame(CCD):
         x = np.arange(*indices)
         y = self.data[int(slice_index), indices[0]:indices[1]].flatten()
 
-        profile_shape = ApertureProfile()
+        if profile.lower() == "gaussian":
+            profile_shape = ApertureProfile()
+
+        elif profile.lower() == "box":
+            profile_shape = BoxProfile()
+
+        else:
+            raise ValueError("unknown profile type given: {}".format(profile))
+
         # The logic for the initial guess of stddev is as follows:
         # aperture_width is the approximate full width between this aperture
         # and the next. Therefore this width encapsulates ~5 sigma either side
         # of the line. So stddev is ~aperture_width/10.
-        default_p0 = dict(b=min(y), amplitude=max(y), stddev=aperture_width/10.,
+        default_p0 = dict(b=min(y), amplitude=max(y), width=aperture_width/10.,
             mean=np.mean(x))
         for k, v in default_p0.items():
             setattr(profile_shape, k, p0.get(k, v))

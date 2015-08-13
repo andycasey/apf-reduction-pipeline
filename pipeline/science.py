@@ -23,69 +23,119 @@ from spectroscopy import SpectroscopicFrame
 logger = logging.getLogger(__name__)
 
 
-@custom_model_1d
-def ApertureProfile(x, b=0., mean=0., stddev=0.05, amplitude=1.):
-    return models.Linear1D.eval(x, slope=0., intercept=b) + \
-           models.Gaussian1D.eval(x, mean=mean, stddev=stddev, \
-                amplitude=amplitude)
-
 
 class ScienceFrame(SpectroscopicFrame):
 
 
-    def fit_apertures(self, index=None):
+    def fit_apertures(self, index=None, profile=None, **kwargs):
+        """
 
+        Some kwargs:
+
+        sigma_detect_threshold [default 1]
+        sigma_remove_threshold [default 3]
+        """
+
+        if profile is None:
+            # Detect the image type to decide whether to use a Gaussian profile
+            # or a box profile.
+            profile = "box" if "Flat" in self.meta["OBJECT"] else "gaussian"
+            logger.info("Assuming {} aperture profile".format(profile))
 
         index = self.data.shape[0]/2 if index is None else int(index)
 
         # Take a slice down the middle and identify all the peak points
-        aperture_midpoints = self._identify_initial_apertures(index)
+        aperture_midpoints = self._identify_initial_apertures(index,
+            **kwargs)
         aperture_width = np.median(np.diff(aperture_midpoints))
 
         # Fit the apertures and refine the midpoints.
         apertures = []
         for midpoint in aperture_midpoints:
             apertures.append(self._fit_aperture(index, midpoint,
-                aperture_width))
+                aperture_width, profile))
+
+        order = kwargs.get("projection_poly_order", 3)
+        min_aperture_amplitude = kwargs.get("min_aperture_amplitude", 20)
+        min_aperture_width = kwargs.get("min_aperture_width", 0.5)
 
         # Shake it to the left.
-        added_left = 1
+        added_left, skip = 1, 1
         while True:
 
             # Project out to the locations of additional apertures
             aperture_peaks = [_.mean.value for _ in apertures]
             aperture_offsets = np.diff(aperture_peaks)
-            coeffs = np.polyfit(aperture_peaks[:-1], aperture_offsets, 2)
+            coeffs = np.polyfit(aperture_peaks[:-1], aperture_offsets, order)
 
             aperture_width_guess = np.polyval(coeffs, apertures[0].mean)
-            if aperture_width_guess < 0: break
+            midpoint_guess = apertures[0].mean - skip * aperture_width_guess
 
-            midpoint_guess = apertures[0].mean - aperture_width_guess
+            logger.debug("{0} apertures and left-side aperture width guess is"\
+                " {1:.0f}, giving mid-point guess of {2:.0f}".format(
+                    len(apertures), aperture_width_guess, midpoint_guess))
+
+            if not (self.shape[1] > midpoint_guess > 0):
+                # We're done here.
+                break
+
             aperture = self._fit_aperture(index, midpoint_guess,
-                aperture_width_guess)
+                aperture_width_guess, profile)
 
-            if aperture.b > aperture.amplitude: break
-            apertures.insert(0, aperture)
-            added_left += 1
+            logger.debug("New aperture has b, amplitude, width = "\
+                "{0:.1f}, {1:.1f}, {2:.1f}".format(aperture.b.value,
+                    aperture.amplitude.value, aperture.width.value))
+
+            if min_aperture_amplitude > aperture.amplitude \
+            or min_aperture_width > aperture.width:
+                skip += 1
+                logger.debug("Skipping invalid aperture.")
+                continue
+
+            else:
+                logger.debug("Added aperture on left side.")
+                skip = 1
+                apertures.insert(0, aperture)
+                added_left += 1
 
         # Shake it to the right.
-        added_right = 1
+        added_right, skip = 1, 1
         while True:
             # Project out to the locations of additional apertures
             aperture_peaks = [_.mean.value for _ in apertures]
             aperture_offsets = np.diff(aperture_peaks)
-            coeffs = np.polyfit(aperture_peaks[:-1], aperture_offsets, 2)
+            coeffs = np.polyfit(aperture_peaks[:-1], aperture_offsets, order)
 
             aperture_width_guess = np.polyval(coeffs, apertures[-1].mean)
-            if aperture_width_guess < 0: break
+            midpoint_guess = apertures[-1].mean + skip * aperture_width_guess
 
-            midpoint_guess = apertures[-1].mean + aperture_width_guess
+            logger.debug("{0} apertures and right-side aperture width guess is"\
+                " {1:.0f}, giving mid-point guess of {2:.0f}".format(
+                    len(apertures), aperture_width_guess, midpoint_guess))
+
+            if not (self.shape[1] > midpoint_guess > 0):
+                # We're done here.
+                break
+
             aperture = self._fit_aperture(index, midpoint_guess,
-                aperture_width_guess)
+                aperture_width_guess, profile)
 
-            if aperture.b > aperture.amplitude: break
-            apertures.append(aperture)
-            added_right += 1
+            logger.debug("New aperture has b, amplitude, width = "\
+                "{0:.1f}, {1:.1f}, {2:.1f}".format(aperture.b.value,
+                    aperture.amplitude.value, aperture.width.value))
+
+            if min_aperture_amplitude > aperture.amplitude \
+            or min_aperture_width > aperture.width:
+
+                skip += 1
+                logger.debug("Skipping invalid aperture.")
+                continue
+
+            else:
+                logger.debug("Added aperture on right side.")
+                skip = 1
+                apertures.append(aperture)
+                added_right += 1
 
         # Shake it all about.
         return apertures
@@ -114,8 +164,8 @@ class ScienceFrame(SpectroscopicFrame):
 
         :param row_limit: [optional]
             Limit the difference between column aperture fits. This value is 
-            multiplied by the `aperture.stddev` and if the difference between
-            successive rows is greater than `row_limit * aperture.stddev`
+            multiplied by the `aperture.width` and if the difference between
+            successive rows is greater than `row_limit * aperture.width`
             then the aperture peak is temporarily rate-limited. Set this value
             to be low if you are seeing traces "jump" between apertures.
 
@@ -153,14 +203,16 @@ class ScienceFrame(SpectroscopicFrame):
 
         :param row_limit: [optional]
             Limit the difference between column aperture fits. This value is 
-            multiplied by the `aperture.stddev` and if the difference between
-            successive rows is greater than `row_limit * aperture.stddev`
+            multiplied by the `aperture.width` and if the difference between
+            successive rows is greater than `row_limit * aperture.width`
             then the aperture peak is temporarily rate-limited. Set this value
             to be low if you are seeing traces "jump" between apertures.
 
         :type row_limit:
             float
         """
+
+
 
         # If no slice index was provided, let's assume it was measured at the
         # CCD mid-plane.
@@ -171,7 +223,7 @@ class ScienceFrame(SpectroscopicFrame):
         if 0 >= row_limit:
             raise ValueError("row rate limit must be positive")
 
-        aperture_width = abs(aperture.stddev) * 2. * 3 # 3 sigma either side.
+        aperture_width = abs(aperture.width) * 2. * 3 # 3 sigma either side.
         aperture_position = np.nan * np.ones(self.data.shape[0])
         aperture_position[slice_index] = aperture.mean.value
 
@@ -182,13 +234,13 @@ class ScienceFrame(SpectroscopicFrame):
 
             # Get max within some pixels
             k = map(int, np.round(np.clip([
-                    previous_mean - abs(aperture.stddev),
-                    previous_mean + abs(aperture.stddev) + 1
+                    previous_mean - abs(aperture.width),
+                    previous_mean + abs(aperture.width) + 1
                 ], 0, self.data.shape[1])))
             new_mean = np.argmax(self.data[i, k[0]:k[1]]) + k[0]
             
             differences[i] = new_mean - previous_mean
-            if abs(differences[i]) >= row_limit * abs(aperture.stddev):
+            if abs(differences[i]) >= row_limit * abs(aperture.width):
                 aperture_position[i] = previous_mean
             else:
                 aperture_position[i] = new_mean
@@ -199,13 +251,13 @@ class ScienceFrame(SpectroscopicFrame):
 
             # Get max within some pixels
             k = map(int, np.round(np.clip([
-                    previous_mean - abs(aperture.stddev),
-                    previous_mean + abs(aperture.stddev) + 1
+                    previous_mean - abs(aperture.width),
+                    previous_mean + abs(aperture.width) + 1
                 ], 0, self.data.shape[1])))
             new_mean = np.argmax(self.data[i, k[0]:k[1]]) + k[0]
 
             differences[i] = new_mean - previous_mean
-            if abs(differences[i]) >= row_limit * aperture.stddev:
+            if abs(differences[i]) >= row_limit * aperture.width:
                 aperture_position[i] = previous_mean
             else:
                 aperture_position[i] = new_mean
@@ -216,7 +268,7 @@ class ScienceFrame(SpectroscopicFrame):
 
 
     def _trace_aperture_by_fitting(self, aperture, slice_index=None,
-        row_limit=1):
+        row_limit=1, profile=None):
         """
         Trace an aperture along the CCD by fittin Gaussian profiles at every
         row.
@@ -236,14 +288,20 @@ class ScienceFrame(SpectroscopicFrame):
 
         :param row_limit: [optional]
             Limit the difference between column aperture fits. This value is 
-            multiplied by the `aperture.stddev` and if the difference between
-            successive rows is greater than `row_limit * aperture.stddev`
+            multiplied by the `aperture.width` and if the difference between
+            successive rows is greater than `row_limit * aperture.width`
             then the aperture peak is temporarily rate-limited. Set this value
             to be low if you are seeing traces "jump" between apertures.
 
         :type row_limit:
             float
         """
+
+        if profile is None:
+            # Detect the image type to decide whether to use a Gaussian profile
+            # or a box profile.
+            profile = "box" if "Flat" in self.meta["OBJECT"] else "gaussian"
+            logger.info("Assuming {} aperture profile".format(profile))
 
         # If no slice index was provided, let's assume it was measured at the
         # CCD mid-plane.
@@ -254,7 +312,7 @@ class ScienceFrame(SpectroscopicFrame):
         if 0 >= row_limit:
             raise ValueError("row rate limit must be positive")
 
-        aperture_width = aperture.stddev * 2. * 3 # 3 sigma either side.
+        aperture_width = aperture.width * 2. * 3 # 3 sigma either side.
         aperture_position = np.nan * np.ones(self.data.shape[0])
         aperture_position[slice_index] = aperture.mean.value
 
@@ -264,10 +322,10 @@ class ScienceFrame(SpectroscopicFrame):
             previous_mean = aperture_position[i - 1]
 
             row_aperture = self._fit_aperture(i, int(previous_mean),
-                aperture_width, stddev=aperture.stddev)
+                aperture_width, width=aperture.width, profile=profile)
 
             differences[i] = row_aperture.mean - previous_mean
-            if abs(differences[i]) >= row_limit * aperture.stddev:
+            if abs(differences[i]) >= row_limit * aperture.width:
                 aperture_position[i] = previous_mean
             else:
                 aperture_position[i] = row_aperture.mean.value
@@ -277,10 +335,10 @@ class ScienceFrame(SpectroscopicFrame):
             previous_mean = aperture_position[i + 1]
 
             row_aperture = self._fit_aperture(i, int(previous_mean),
-                aperture_width, stddev=aperture.stddev)
+                aperture_width, width=aperture.width, profile=profile)
 
             differences[i] = row_aperture.mean - previous_mean
-            if abs(differences[i]) >= row_limit * aperture.stddev:
+            if abs(differences[i]) >= row_limit * aperture.width:
                 aperture_position[i] = previous_mean
             else:
                 aperture_position[i] = row_aperture.mean.value
@@ -309,8 +367,8 @@ class ScienceFrame(SpectroscopicFrame):
 
         :param row_limit: [optional]
             Limit the difference between column aperture fits. This value is 
-            multiplied by the `aperture.stddev` and if the difference between
-            successive rows is greater than `row_limit * aperture.stddev`
+            multiplied by the `aperture.width` and if the difference between
+            successive rows is greater than `row_limit * aperture.width`
             then the aperture peak is temporarily rate-limited. Set this value
             to be low if you are seeing traces "jump" between apertures.
 
@@ -494,11 +552,11 @@ class ScienceFrame(SpectroscopicFrame):
 
         ax.plot(data_slice, c="k")
 
-        stddev = abs(np.median([_.stddev for _ in apertures]))
+        width = abs(np.median([_.width for _ in apertures]))
         for aperture in apertures:
             x = np.linspace(
-                aperture.mean - 5 * stddev,
-                aperture.mean + 5 * stddev,
+                aperture.mean - 5 * width,
+                aperture.mean + 5 * width,
                 100)
             ax.plot(x, aperture(x), c="r")
 
