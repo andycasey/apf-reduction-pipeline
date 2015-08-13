@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 class ScienceFrame(SpectroscopicFrame):
 
 
-    def fit_apertures(self, index=None, profile=None, **kwargs):
+    def fit_apertures(self, index=None, profile="gaussian", **kwargs):
         """
 
         Some kwargs:
@@ -35,12 +35,6 @@ class ScienceFrame(SpectroscopicFrame):
         sigma_detect_threshold [default 1]
         sigma_remove_threshold [default 3]
         """
-
-        if profile is None:
-            # Detect the image type to decide whether to use a Gaussian profile
-            # or a box profile.
-            profile = "box" if "Flat" in self.meta["OBJECT"] else "gaussian"
-            logger.info("Assuming {} aperture profile".format(profile))
 
         index = self.data.shape[0]/2 if index is None else int(index)
 
@@ -268,7 +262,7 @@ class ScienceFrame(SpectroscopicFrame):
 
 
     def _trace_aperture_by_fitting(self, aperture, slice_index=None,
-        row_limit=1, profile=None):
+        row_limit=1, profile="gaussian"):
         """
         Trace an aperture along the CCD by fittin Gaussian profiles at every
         row.
@@ -296,12 +290,6 @@ class ScienceFrame(SpectroscopicFrame):
         :type row_limit:
             float
         """
-
-        if profile is None:
-            # Detect the image type to decide whether to use a Gaussian profile
-            # or a box profile.
-            profile = "box" if "Flat" in self.meta["OBJECT"] else "gaussian"
-            logger.info("Assuming {} aperture profile".format(profile))
 
         # If no slice index was provided, let's assume it was measured at the
         # CCD mid-plane.
