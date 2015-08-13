@@ -551,6 +551,33 @@ class ScienceFrame(SpectroscopicFrame):
         return fig
 
 
+    def fit_aperture_widths(self, coefficients):
+        """
+        Calculate the aperture widths at each point along the aperture traces.
+
+        """
+        coefficients = np.atleast_2d(coefficients)
+
+        y = np.arange(self.shape[0])
+        for c in coefficients:
+            x = np.polyval(c, y)
+
+            # At each index in y, we want to fit an aperture to the peak at x.
+
+
+            # We have the x and y coordinate of the peak of the trace.
+            # Slice across x? axis and fit to those data.
+            # Use the data +/- the approximate aperture width.
+
+            # Fixed: x position, background,
+            # Free: peak value, width.
+
+            f = self.plot_aperture_trace(coefficients)
+
+            raise a
+
+
+
     def plot_aperture_trace(self, coefficients, widths=0, ax=None, **kwargs):
         """
         Plot the aperture trace across the CCD from the coefficients provided.

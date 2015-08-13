@@ -40,7 +40,7 @@ class CCD(NDData):
         self.meta["_overscan_shape"] = (0, 0)
 
         self.__header_keys = ("RA", "DEC", "OBJECT", "OBSTYPE", "EXPTIME",
-            "DATE-OBS", "DATASEC", "ROVER", "COVER")
+            "DATE-OBS", "DATASEC", "ROVER", "COVER", "DECKRNAM")
 
     @property
     def imstat(self):
