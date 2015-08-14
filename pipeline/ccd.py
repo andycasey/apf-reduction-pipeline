@@ -246,7 +246,7 @@ class CCD(NDData):
         elif method == "mode":
 
             # Clip zeros.
-            min_value = kwargs.pop("min_value", 0)
+            min_value = kwargs.pop("min_value", 1e-8)
             self._data[self._data < min_value] = min_value
 
             # Normalise to the mode.
