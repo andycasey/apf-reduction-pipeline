@@ -24,6 +24,14 @@ logger = logging.getLogger(__name__)
 
 
 
+@custom_model_1d
+def ApertureProfile(x, b=0., mean=0., width=1., amplitude=1.):
+    return models.Linear1D.evaluate(x, slope=0., intercept=b) + \
+           models.Gaussian1D.evaluate(x, mean=mean, stddev=width, \
+               amplitude=amplitude)
+
+
+
 class ScienceFrame(SpectroscopicFrame):
 
 
@@ -551,31 +559,97 @@ class ScienceFrame(SpectroscopicFrame):
         return fig
 
 
-    def fit_aperture_widths(self, coefficients):
+    def fit_aperture_widths(self, coefficients, maxiter=500, y_order=3,
+        y_sigma_clip=2, **kwargs):
         """
         Calculate the aperture widths at each point along the aperture traces.
 
         """
         coefficients = np.atleast_2d(coefficients)
 
-        y = np.arange(self.shape[0])
-        for c in coefficients:
+        # What is the spacing between orders?
+        N_orders, _ = coefficients.shape
+
+        order_spacing = np.diff(coefficients[:, -1])
+
+        wlf = kwargs.get("width_limit_fraction", 0.75)
+        aperture_widths = np.nan * np.ones((N_orders, self.shape[0]))
+        aperture_width_coefficients = np.ones((N_orders, y_order + 1))
+        
+        for i, c in enumerate(coefficients):
+
+            y = np.arange(self.shape[0]).astype(int)
             x = np.polyval(c, y)
+            logger.info("Fitting aperture widths on order {}".format(i))
 
-            # At each index in y, we want to fit an aperture to the peak at x.
+            spacing = order_spacing[min([i, len(order_spacing) - 1])]
+            for y_index in y:
 
+                x_indices = np.arange(np.floor(x[y_index] - 0.5 * spacing), 
+                    1 + np.ceil(x[y_index] + 0.5 * spacing), 1).astype(int)
 
-            # We have the x and y coordinate of the peak of the trace.
-            # Slice across x? axis and fit to those data.
-            # Use the data +/- the approximate aperture width.
+                y_indices = y_index * np.ones(len(x_indices)).astype(int)
 
-            # Fixed: x position, background,
-            # Free: peak value, width.
+                y_data = self._data[y_indices, x_indices]
+                x_data = x_indices
 
-            f = self.plot_aperture_trace(coefficients)
+                # Set up the aperture profile.
+                p0 = dict(b=min(y_data), amplitude=max(y_data), mean=x[y_index],
+                    width=spacing * 0.25)
 
-            raise a
+                profile = ApertureProfile()
+                for k, v in p0.items():
+                    setattr(profile, k, v)
 
+                profile.bounds["width"] = (-wlf * spacing, +wlf * spacing)
+                profile.bounds["mean"] \
+                    = (x[y_index] - 0.25 * spacing, x[y_index] + 0.25 * spacing)
+
+                fit = fitting.LevMarLSQFitter()
+                fitted = fit(profile, x_data, y_data, maxiter=maxiter)
+                fitted.width.value = abs(fitted.width.value)
+
+                logger.debug("Aperture width of order {o} at ({x:.0f}, {y:.0f})"
+                    " is {w:.1f}".format(o=i, x=x[y_index], y=y_index,
+                        w=fitted.width.value))
+
+                # Is there any reason why we should not believe this fit?
+                if fit.fit_info["ierr"] in (1, 2, 3, 4) \
+                and fitted.width.value > 0 \
+                and fitted.width.value != wlf * spacing:
+                    aperture_widths[i, y_index] = fitted.width.value
+                else:
+                    logger.debug("Ignoring potentially erroneous fit: {0}: {1}"\
+                        .format(fit.fit_info["ierr"], fit.fit_info["message"]))
+
+            # Done fitting all aperture widths for this order.
+            # These are imprecise (noisey) estimates at each point along the
+            # order. So we should actually fit the fitted widths as a low-order
+            # polynomial along the y-index.
+
+            y = aperture_widths[i, :]
+            x = np.arange(y.size)
+
+            finite = np.isfinite(y)
+            coefficients = np.polyfit(x[finite], y[finite], y_order)
+
+            # Clip deviants.
+            model = np.polyval(coefficients, x)
+            outliers = np.abs((model - y)/np.nanstd(model - y)) > y_sigma_clip
+
+            _ = finite * ~outliers
+            aperture_width_coefficients[i, :] = np.polyfit(x[_], y[_], y_order)
+
+            """
+            # Plot it.
+            fig, ax = plt.subplots()
+            ax.scatter(x[finite], y[finite], facecolor="#666666")
+            ax.scatter(x[~outliers], y[~outliers], facecolor="k")
+            ax.plot(x, np.polyval(aperture_width_coefficients[i, :], x), c='r')
+            fig.savefig("order-{}.png".format(i))
+            """
+
+        return (aperture_widths, aperture_width_coefficients)
 
 
     def plot_aperture_trace(self, coefficients, widths=0, ax=None, **kwargs):

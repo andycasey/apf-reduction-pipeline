@@ -31,7 +31,7 @@ CLOBBER = True
 
 TRACE_OBJECT = "HR6827"
 REDUCTION_STEPS = {
-    "COMBINE_FLATS": True,
+    "COMBINE_FLATS": False,
     "NORMALISE_FLAT": True,
     "TRACE_APERTURES": ["rockosi10027.fits", "rockosi10047.fits"], # HR6827
     "COMBINE_THARS": True,
@@ -45,15 +45,6 @@ TRACE_APERTURE_KWARGS = {}
 data = pipeline.observing.Sequence(glob("{}*.fits".format(RAW_DATA_DIR)),
     additional_keywords=["ICELNAM", "OMEGAPOW"])
 
-
-
-image = pipeline.science.ScienceFrame.from_filename("../data/20150801/reduced/NarrowFlat-median-all.fits")
-apertures = image.fit_apertures()
-coefficients = image.trace_apertures(apertures)
-
-fig = image.plot_aperture_trace(coefficients)
-
-
 # Combine flats.
 if REDUCTION_STEPS.get("COMBINE_FLATS", True):
 
@@ -63,11 +54,6 @@ if REDUCTION_STEPS.get("COMBINE_FLATS", True):
     }
     kwds.update(COMBINE_FLAT_KWARGS)
     logger.info("Combining flats using keywords: {}".format(kwds))
-
-    # TODO: Cosmic ray clean the wide flats
-    # TODO: Cosmic ray clean the narrow flats
-
-    # TODO: Combine *all* Narrow flats into a single image.
 
     # Combine Wide Flats
     combined_flats, idx = data.combine_sequential_images("WideFlat", **kwds)
@@ -90,23 +76,29 @@ if REDUCTION_STEPS.get("COMBINE_FLATS", True):
         combined_flat.writeto(filename, clobber=CLOBBER)
 
     # Combine *all* narrow flats for a good trace.
+    _kwds = kwds.copy()
+    [_kwds.pop(_, None) for _ in ("same_decker", "clean_cosmic_rays")]
     combined_narrow_flat = data.combine_images("NarrowFlat", same_decker=False,
-        clean_cosmic_rays=False, **kwds)
+        clean_cosmic_rays=False, **_kwds)
     filename = os.path.join(REDUCED_DATA_DIR, "NarrowFlat-all.fits")
-    logger.info("Saved combined NarrowFlat (all images) to {}".format(filename))
+    logger.info("Saving combined NarrowFlat (all images) to {}".format(filename))
     combined_narrow_flat.writeto(filename, clobber=CLOBBER)
 
+    # Combine *all* wide flats for a normalised flat field.
+    _kwds = kwds.copy()
+    _kwds.pop("clean_cosmic_rays", None)
+    combined_wide_flat = data.combine_images("WideFlat", same_decker=True,
+        clean_cosmic_rays=False, **_kwds)[0]
+    filename = os.path.join(REDUCED_DATA_DIR, "WideFlat-all.fits")
+    logger.info("Saving combined WideFlat (all images) to {}".format(filename))
+    combined_wide_flat.writeto(filename, clobber=CLOBBER)
 
-
-    apertures = combined_narrow_flat.fit_apertures()
-    coefficients = combined_narrow_flat.trace_apertures(apertures)
-
-    fig = combined_narrow_flat.plot_aperture_trace(coefficients)
-
-
-
-    raise a
-
+    # Normalise this flat by the mode.
+    combined_wide_flat.normalise(method="mode")
+    filename = os.path.join(REDUCED_DATA_DIR, "WideFlat-all-normalised.fits")
+    logger.info("Saving normalised combined WideFlat (all images) to {}".format(
+        filename))
+    combined_wide_flat.writeto(filename, clobber=CLOBBER)
 
 
 # Let's use combined NarrowFlat frames to trace the location of the orders.
@@ -115,54 +107,53 @@ if REDUCTION_STEPS.get("TRACE_APERTURES", True):
     kwds = {}
     kwds.update(TRACE_APERTURE_KWARGS)
 
-    filenames = glob(os.path.join(REDUCED_DATA_DIR, "NarrowFlat-*.fits"))
-    for image_filename in filenames:
-        image = pipeline.ScienceFrame.from_filename(image_filename)
-        apertures = image.fit_apertures(**kwds)
-        coefficients = image.trace_apertures(apertures, **kwds)
+    trace_filename = os.path.join(REDUCED_DATA_DIR, "NarrowFlat-all.fits")
+    image = pipeline.ScienceFrame.from_filename(trace_filename)
+    apertures = image.fit_apertures(**kwds)
+    coefficients = image.trace_apertures(apertures, **kwds)
 
-        basename = os.path.splitext(image_filename)[0]
+    basename = os.path.splitext(trace_filename)[0]
 
-        # Create some figures.
-        fig = image.plot_apertures(apertures)
-        fig.savefig("{0}-apertures.png".format(basename))
+    # Create some figures.
+    fig = image.plot_apertures(apertures)
+    fig.savefig("{0}-apertures.png".format(basename), dpi=300)
 
-        fig = image.plot_aperture_trace(coefficients)
-        fig.savefig("{0}-aperture-trace.png".format(basename))
+    fig = image.plot_aperture_trace(coefficients)
+    fig.savefig("{0}-aperture-trace.png".format(basename), dpi=300)
 
+    filename = "{0}-coefficients.pkl".format(basename)
+    logger.info("Saving aperture trace coefficients from {0} to {1}".format(
+        trace_filename, filename))
 
-        raise a
+    with open(filename, "wb") as fp:
+        pickle.dump((coefficients, ), fp, -1)
 
-        filename = "{0}-coefficients.pkl".format(basename)
-        logger.info("Saving aperture trace coefficients from {0} to {1}".format(
-            image_filename, filename))
+    # Get the nearest observation of HR6827 to this one.
+    nearest_trace_index = data.get_nearest_observation(image, TRACE_OBJECT,
+        same_decker=False)
 
-        with open(filename, "wb") as fp:
-            pickle.dump((coefficients, ), fp, -1)
-
-        # Get the nearest observation of HR6827 to this one.
-        nearest_trace_index = data.get_nearest_observation(image, TRACE_OBJECT,
-            same_decker=False)
-
-        # Load the trace image and prepare it for aperture tracing.
-        trace_image = pipeline.ScienceFrame.from_filename(
-            data.observations["FILENAME"][nearest_trace_index])
-        trace_image.subtract_overscan()
-
-        
-        aperture_widths = trace_image.fit_aperture_widths(coefficients)
+    # Load the trace image and prepare it for aperture tracing.
+    trace_image = pipeline.ScienceFrame.from_filename(
+        data.observations["FILENAME"][nearest_trace_index])
+    trace_image.subtract_overscan()
 
 
+    """
+    # Noramlise the trace image by the flat field.
+    normalised_flat = pipeline.ccd.CCD.from_filename(
+        os.path.join(REDUCED_DATA_DIR, "WideFlat-all-normalised.fits"))
+    trace_image /= normalised_flat
+    trace_image.writeto("test.fits")
+    """
+
+    aperture_widths, aperture_width_coefficients \
+        = trace_image.fit_aperture_widths(coefficients)
+
+    raise a
 
 
 
 
-        raise a
-
-
-        #fit_aperture_widths(self, coefficients):
-
-        continue
 
     raise a
 
