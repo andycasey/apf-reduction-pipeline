@@ -68,6 +68,45 @@ class Sequence(object):
         return None
 
 
+    @property
+    def standard_star_frames(self):
+        # Return stars starting with object 'HR'
+        return np.array([_.startswith("HR") for _ in self.observations["OBJECT"]])
+
+
+    @property
+    def science_frames(self):
+        """
+        Return the science frames as indices from the observing table.
+        """
+        ignore_types = ("Dark", "Iodine", "NarrowFlat", "ThAr", "WideFlat")
+        mask = np.ones(len(self.observations), dtype=bool)
+        for i, object_type in enumerate(self.observations["OBJECT"]):
+            if object_type in ignore_types:
+                mask[i] = False
+        return mask
+
+    @property
+    def dark_frames(self):
+        return self.observations["OBJECT"] == "Dark"
+
+    @property
+    def iodine_frames(self):
+        return self.observations["OBJECT"] == "Iodine"
+
+    @property
+    def arc_frames(self):
+        return self.observations["OBJECT"] == "ThAr"
+
+    @property
+    def wide_flat_frames(self):
+        return self.observations["OBJECT"] == "WideFlat"
+
+    @property
+    def narrow_flat_frames(self):
+        return self.observations["OBJECT"] == "NarrowFlat"
+
+
     def get_nearest_observation(self, image, object_type, same_decker=True):
         """
         Return the nearest observation of a specific type to the observation

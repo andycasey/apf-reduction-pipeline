@@ -255,6 +255,18 @@ class CCD(NDData):
         return self
 
 
+    def apply_flat_field(self, flat_field):
+        """
+        Normalise the data by a given normalised flat field.
+        """
+
+        self._data /= flat_field._data
+        self.meta["HISTORY"] = "Divided by master flat field {}".format(
+            os.path.basename(flat_field.meta["_filename"]))
+
+        return self
+
+
 
 def combine_data(frames, method="median", **kwargs):
     """

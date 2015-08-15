@@ -485,6 +485,68 @@ class ScienceFrame(SpectroscopicFrame):
         return aperture_mask
 
 
+    def gaussian_extract_apertures(self, aperture_coefficients, aperture_widths,
+        wavelength_mapping="APF_WaveSoln.pickle", aperture_offset=0,
+        reverse_wavelengths=False):
+        """
+        Return the flux in the apertures using Gaussian extraction.
+        """
+
+        with open(wavelength_mapping, "rb") as fp:
+            wavelength_mapping = pickle.load(fp)
+
+        apertures = []
+        N_orders = aperture_coefficients.shape[0]
+        for i in range(N_orders):
+
+            fluxes = self.gaussian_extract_aperture(aperture_coefficients[i, :],
+                aperture_widths[i])
+            wavelengths = wavelength_mapping[i + aperture_offset, :]
+
+            if wavelengths[-1] < wavelengths[0]:
+                wavelengths = wavelengths[::-1]
+                fluxes = fluxes[::-1]
+
+            if reverse_wavelengths:
+                fluxes = fluxes[::-1]
+
+            apertures.append((wavelengths, fluxes))
+
+        return apertures
+
+
+    def gaussian_extract_aperture(self, aperture_coefficients, aperture_width,
+        extraction_sigma=3):
+        """
+        Perform Gaussian extraction on an aperture.
+        """
+
+        y = np.arange(self.shape[0]).astype(int)
+        if hasattr(aperture_width, "__call__"):
+            aperture_width = aperture_width(y)
+
+        x = np.polyval(aperture_coefficients, y)
+
+        # We now have the x values and the widths at each point.
+
+        # Integral of the flux * a Gaussian.
+        fluxes = np.zeros(y.size, dtype=float)
+        for xi, yi, wi in zip(x, y, aperture_width):
+
+            x_indices = np.arange(np.floor(x - extraction_sigma * wi),
+                np.ceil(x + extraction_sigma * wi + 1)).astype(int)
+            clip = np.searchsorted(x_indices, [0, self.shape[1]])
+            x_indices = x_indices[clip[0]:clip[1]]
+            y_indices = yi * np.ones(x_indices.size, dtype=int)
+
+            gaussian = 1.0/(wi * np.sqrt(2*np.pi)) \
+                * np.exp((x_indices - xi)**2/(2. * wi**2))
+            fluxes[yi] = np.nansum(self.data[y_indices, x_indices] * gaussian)
+
+            raise a
+        raise a
+
+
     def extract_aperture(self, coefficients, width, discretize="round", 
         **kwargs):
         """
@@ -512,6 +574,8 @@ class ScienceFrame(SpectroscopicFrame):
         :type discretize:
             str
         """
+
+        raise WTFOldWay
 
         if np.any(self.flags["overscan"]):
             logger.warn("Extracting science apertures even though there are "
@@ -559,8 +623,55 @@ class ScienceFrame(SpectroscopicFrame):
         return fig
 
 
-    def fit_aperture_widths(self, coefficients, maxiter=500, y_order=3,
-        y_sigma_clip=2, **kwargs):
+    def fit_functions_to_aperture_widths(self, aperture_widths, sigma_clip=1.5,
+        iterations=3, t=None, k=5, width_limits=None):
+        """
+        Fit splines to the aperture widths calculated at each point on the CCD.
+        """
+
+        if width_limits is not None:
+            aperture_widths = aperture_widths.copy()
+            lower, upper = width_limits
+            if upper is not None:
+                aperture_widths[aperture_widths >= upper] = np.nan
+            if lower is not None:
+                aperture_widths[aperture_widths <= lower] = np.nan
+
+        tcks = []
+        t = [] if t is None else t
+        N_orders = aperture_widths.shape[0]
+        for i in range(N_orders):
+
+            x = np.arange(aperture_widths.shape[1])
+            y = aperture_widths[i, :]
+            finite, outliers = np.isfinite(y), np.zeros(y.size, dtype=bool)
+
+            for j in range(iterations):
+
+                use = finite * ~outliers
+                if j == 0:  
+                    # Fit a low-order polynomial first.
+                    c = np.polyfit(x[use], y[use], 3)
+                    model = np.polyval(c, x)
+
+                else:
+                    tck = splrep(x[use], y[use], t=[], k=3)
+                    model = splev(x, tck)
+
+                residuals = model - y
+                new_outliers = sum(outliers)
+                outliers = np.abs(residuals)/np.nanstd(residuals) > sigma_clip
+                new_outliers -= sum(outliers)
+                if new_outliers == 0:
+                    break
+
+            tck = splrep(x[use], y[use], t=t, k=k)
+            tcks.append(tck)
+            
+        return tcks
+
+
+    def fit_aperture_widths(self, coefficients, maxiter=500, **kwargs):
         """
         Calculate the aperture widths at each point along the aperture traces.
 
@@ -574,7 +685,6 @@ class ScienceFrame(SpectroscopicFrame):
 
         wlf = kwargs.get("width_limit_fraction", 0.75)
         aperture_widths = np.nan * np.ones((N_orders, self.shape[0]))
-        aperture_width_coefficients = np.ones((N_orders, y_order + 1))
         
         for i, c in enumerate(coefficients):
 
@@ -587,6 +697,14 @@ class ScienceFrame(SpectroscopicFrame):
 
                 x_indices = np.arange(np.floor(x[y_index] - 0.5 * spacing), 
                     1 + np.ceil(x[y_index] + 0.5 * spacing), 1).astype(int)
+
+                # Clip this for when we are at the edge of the CCD.
+                clip_indices = np.searchsorted(x_indices, [0, self.shape[1]])
+                x_indices = x_indices[clip_indices[0]:clip_indices[1]]
+
+                if len(x_indices) < 4:
+                    # The aperture falls off the CCD here.
+                    continue
 
                 y_indices = y_index * np.ones(len(x_indices)).astype(int)
 
@@ -626,31 +744,100 @@ class ScienceFrame(SpectroscopicFrame):
             # These are imprecise (noisey) estimates at each point along the
             # order. So we should actually fit the fitted widths as a low-order
             # polynomial along the y-index.
-
+            """
             y = aperture_widths[i, :]
             x = np.arange(y.size)
 
             finite = np.isfinite(y)
-            coefficients = np.polyfit(x[finite], y[finite], y_order)
+            fit_coefficients = np.polyfit(x[finite], y[finite], y_order)
 
             # Clip deviants.
-            model = np.polyval(coefficients, x)
+            model = np.polyval(fit_coefficients, x)
             outliers = np.abs((model - y)/np.nanstd(model - y)) > y_sigma_clip
 
             _ = finite * ~outliers
             aperture_width_coefficients[i, :] = np.polyfit(x[_], y[_], y_order)
 
-            """
             # Plot it.
             fig, ax = plt.subplots()
             ax.scatter(x[finite], y[finite], facecolor="#666666")
             ax.scatter(x[~outliers], y[~outliers], facecolor="k")
             ax.plot(x, np.polyval(aperture_width_coefficients[i, :], x), c='r')
             fig.savefig("order-{}.png".format(i))
+
             """
 
-        return (aperture_widths, aperture_width_coefficients)
+        return aperture_widths
+        #return (aperture_widths, aperture_width_coefficients)
 
+
+    def get_inter_order_spacing(self, aperture_coefficients, aperture_widths,
+        aperture_sigma=4):
+        """
+        Mask out the data that is taken up by the orders, in order to reveal
+        the inter-order data.
+        """
+
+        # Identify the pixels that are contained within +/- `aperture_sigma` *
+        # `aperture_width` at each point.
+
+        mask = np.ones(self.shape, dtype=bool)
+        for i, (coefficients, tck) \
+        in enumerate(zip(aperture_coefficients, aperture_widths)):
+            y = np.arange(self.shape[0]).astype(int)
+            x, widths = np.polyval(coefficients, y), splev(y, tck)
+            for xi, yi, wi in zip(x, y, widths):
+                x_indices = np.clip(np.arange(
+                    xi - aperture_sigma * wi,
+                    xi + aperture_sigma * wi + 1).astype(int),
+                    0, mask.shape[1]  - 1)
+                y_indices = np.clip(yi * np.ones(x_indices.size).astype(int),
+                    0, mask.shape[0] - 1)
+                mask[y_indices, x_indices] = False
+        return mask
+
+
+    def model_background(self, aperture_coefficients, aperture_widths):
+
+        mask = self.get_inter_order_spacing(aperture_coefficients,
+            aperture_widths, aperture_sigma=2)
+
+        data = self._data.copy()
+        data[~mask] = np.nan
+
+        # Go through each row, average the flux values between the apertures.
+        avg_x = []
+        avg_y = []
+        avg_data = []
+        for i in range(data.shape[0]):
+            print("Doing row {}".format(i))
+
+            idx = np.hstack([-1, np.where(np.diff(np.isfinite(data[i, :])))[0]])
+            if idx.size % 2 > 0: idx = np.append(idx, data.shape[1])
+            for start_index, end_index in 1 + idx.reshape(-1, 2):
+                # Average the data in this region.
+                avg_x.append(np.mean([start_index, end_index]))
+                avg_y.append(i)
+                avg_data.append(np.median(data[i, start_index:end_index]))
+        
+        fig, ax = plt.subplots()
+        vmax = np.median(avg_data) + 3 * np.std(avg_data)
+        scat = ax.scatter(avg_y, avg_x, c=avg_data, linewidths=0,
+            vmin=0, vmax=vmax)
+        cbar = plt.colorbar(scat)
+        ax.set_xlim(0, data.shape[0])
+        ax.set_ylim(0, data.shape[1])
+        ax.set_xticks(np.arange(0, data.shape[0], 1024))
+        ax.set_yticks(np.arange(0, data.shape[1] + 512, 512))
+
+        ax.set_xlabel(r"$x$ $[{\rm pixels}]$")
+        ax.set_ylabel(r"$y$ $[{\rm pixels}]$")
+        cbar.set_label(r"${\rm Counts}$")
+
+        fig.tight_layout()
+
+
+        raise a
 
     def plot_aperture_trace(self, coefficients, widths=0, ax=None, **kwargs):
         """

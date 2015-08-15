@@ -11,6 +11,7 @@ import logging
 import matplotlib
 matplotlib.rcParams["text.usetex"] = True
 from matplotlib.ticker import MaxNLocator
+from scipy.interpolate import splev
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -33,8 +34,9 @@ TRACE_OBJECT = "HR6827"
 REDUCTION_STEPS = {
     "COMBINE_FLATS": False,
     "NORMALISE_FLAT": True,
-    "TRACE_APERTURES": ["rockosi10027.fits", "rockosi10047.fits"], # HR6827
+    "TRACE_APERTURES": False, # HR6827
     "COMBINE_THARS": True,
+    "SOLVE_WAVELENGTHS": False
 }
 
 # Optional extras.
@@ -137,26 +139,121 @@ if REDUCTION_STEPS.get("TRACE_APERTURES", True):
         data.observations["FILENAME"][nearest_trace_index])
     trace_image.subtract_overscan()
 
-
-    """
-    # Noramlise the trace image by the flat field.
-    normalised_flat = pipeline.ccd.CCD.from_filename(
-        os.path.join(REDUCED_DATA_DIR, "WideFlat-all-normalised.fits"))
-    trace_image /= normalised_flat
-    trace_image.writeto("test.fits")
     """
 
-    aperture_widths, aperture_width_coefficients \
-        = trace_image.fit_aperture_widths(coefficients)
+    aperture_widths = trace_image.fit_aperture_widths(coefficients)
+    filename = "{0}-aperture-widths.pkl".format(basename)
+    logger.info("Saving fitted aperture widths from {0} to {1}".format(
+        trace_filename, filename))
 
+    with open(filename, "wb") as fp:
+        pickle.dump((aperture_widths, ), fp, -1)
+
+    """
+
+    filename = "{0}-aperture-widths.pkl".format(basename)
+    with open(filename, "rb") as fp:
+        aperture_widths = pickle.load(fp)[0]
+
+    # Fit those aperture widths with functions.
+    width_limits = (1, 5)
+    tcks = trace_image.fit_functions_to_aperture_widths(aperture_widths,
+        width_limits=width_limits)
+
+    # Plot them.
+    for i, tck in enumerate(tcks):
+
+        x = np.arange(aperture_widths.shape[1])
+
+        fig, ax = plt.subplots()
+        ax.scatter(x, aperture_widths[i, :], facecolor="k")
+        ax.plot(x, splev(x, tck), c="r", lw=2)
+        ax.set_xlim(0, x[-1])
+        ax.set_ylim(0, width_limits[1] + 1)
+        ax.axhline(width_limits[0], c="#666666", zorder=-1)
+        ax.axhline(width_limits[1], c="#666666", zorder=-1)
+        filename = "{0}-aperture-width-trace-{1}.png".format(basename, i)
+        logger.info("Created image {}".format(filename))
+        fig.savefig(filename, dpi=300)
+
+
+    filename = "{0}-aperture-width-functions.pkl".format(basename)
+    logger.info("Saving fitted aperture width functions from {0} to {1}".format(
+        trace_filename, filename))
+
+    with open(filename, "wb") as fp:
+        pickle.dump((aperture_widths, tcks), fp, -1)
+
+    filename = "{0}-apertures.pkl".format(basename)
+    logger.info("Saving full aperture information (positions, widths) from {0} "
+        "to {1}".format(trace_filename, filename))
+
+    with open(filename, "wb") as fp:
+        pickle.dump((coefficients, tcks), fp, -1)
+
+
+if REDUCTION_STEPS.get("MODEL_SKY", True):
+    filename = os.path.join(REDUCED_DATA_DIR, "NarrowFlat-all-apertures.pkl")
+    with open(filename, "rb") as fp:
+        coefficients, tcks = pickle.load(fp)
+
+    standard_star = pipeline.ScienceFrame.from_filename(
+        data.observations["FILENAME"][data.standard_star_frames][0])
+    standard_star.subtract_overscan()
+
+    #mask = standard_star.get_inter_order_spacing(coefficients, tcks)
+
+    m = standard_star.model_background(coefficients, tcks)
     raise a
 
 
 
+if REDUCTION_STEPS.get("EXTRACT_SCIENCE", True):
+
+    # Load the master (wide) flat field.
+    flat_field = pipeline.ccd.CCD.from_filename(os.path.join(REDUCED_DATA_DIR,
+        "WideFlat-all.fits"))
+
+    # Extract the standard.
+    trace_filename = data.observations["FILENAME"][data.standard_star_frames][0]
+
+    trace_image = pipeline.ScienceFrame.from_filename(trace_filename)
+    trace_image.subtract_overscan()
+    trace_image.clean_cosmic_rays()
+
+    trace_image.apply_flat_field(flat_field)
+
+    # [TODO] No background subtraction.
+
+    with open(filename, "rb") as fp:
+        _, tcks = pickle.load(fp)
+
+    # Re-create spline functions from the tcks
+    aperture_widths = [lambda x: splev(x, tck) for tck in tcks]
 
 
-    raise a
+    orders = trace_image.extract_apertures(aperture_position_coefficients,
+        aperture_widths)
 
+
+
+    # Apply some incorrect wavelength mapping...
+
+
+
+    # Find all the science frames that match the decker in the standard.
+
+    # Extract all science frames.
+
+    # Load and apply a wavelength mapping.
+
+    # Save the fits.
+
+    # Stack images.
+
+
+
+    # Median stack common stars before extraction.
 
 
 
