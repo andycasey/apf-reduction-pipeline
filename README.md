@@ -14,6 +14,9 @@ Example image: Precisely trace apertures
 Example image: Aperture width across the CCD (important for proper extraction)
 ![aperture-widths-across-ccd](https://i.imgur.com/MMY7g1K.png)
 
+Example image: Background flux (including the red ghost)
+![background](https://i.imgur.com/wCv78Kj.jpg)
+
 Copyright 2015, Andy Casey. All rights reserved.
 
 (Don't worry: I'll eventually open source this, but for the moment it is copyright. Email me if you want to use this before it's open source.)
