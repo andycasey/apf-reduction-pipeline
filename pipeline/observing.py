@@ -79,6 +79,7 @@ class Sequence(object):
         """
         Return the science frames as indices from the observing table.
         """
+
         ignore_types = ("Dark", "Iodine", "NarrowFlat", "ThAr", "WideFlat")
         mask = np.ones(len(self.observations), dtype=bool)
         for i, object_type in enumerate(self.observations["OBJECT"]):

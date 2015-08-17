@@ -7,6 +7,7 @@ from __future__ import division, print_function
 __author__ = "Andy Casey <arc@ast.cam.ac.uk>"
 
 # Standard library
+import cPickle as pickle
 import logging
 
 # Third-party
@@ -492,60 +493,53 @@ class ScienceFrame(SpectroscopicFrame):
         Return the flux in the apertures using Gaussian extraction.
         """
 
-        with open(wavelength_mapping, "rb") as fp:
-            wavelength_mapping = pickle.load(fp)
-
         apertures = []
         N_orders = aperture_coefficients.shape[0]
         for i in range(N_orders):
 
             fluxes = self.gaussian_extract_aperture(aperture_coefficients[i, :],
                 aperture_widths[i])
-            wavelengths = wavelength_mapping[i + aperture_offset, :]
+            #wavelengths = wavelength_mapping[-i + aperture_offset, :]
 
-            if wavelengths[-1] < wavelengths[0]:
-                wavelengths = wavelengths[::-1]
-                fluxes = fluxes[::-1]
+            #if wavelengths[-1] < wavelengths[0]:
+            #    wavelengths = wavelengths[::-1]
+            #    fluxes = fluxes[::-1]
 
-            if reverse_wavelengths:
-                fluxes = fluxes[::-1]
+            #if reverse_wavelengths:
+            #    fluxes = fluxes[::-1]
 
-            apertures.append((wavelengths, fluxes))
+            apertures.append(fluxes)
 
         return apertures
 
 
-    def gaussian_extract_aperture(self, aperture_coefficients, aperture_width,
+    def gaussian_extract_aperture(self, aperture_coefficients, width_tcks,
         extraction_sigma=3):
         """
         Perform Gaussian extraction on an aperture.
         """
 
         y = np.arange(self.shape[0]).astype(int)
-        if hasattr(aperture_width, "__call__"):
-            aperture_width = aperture_width(y)
-
         x = np.polyval(aperture_coefficients, y)
-
-        # We now have the x values and the widths at each point.
+        w = splev(y, width_tcks)
 
         # Integral of the flux * a Gaussian.
         fluxes = np.zeros(y.size, dtype=float)
-        for xi, yi, wi in zip(x, y, aperture_width):
+        #fluxes2 = np.zeros(y.size, dtype=float)
+        for xi, yi, wi in zip(x, y, w):
 
-            x_indices = np.arange(np.floor(x - extraction_sigma * wi),
-                np.ceil(x + extraction_sigma * wi + 1)).astype(int)
+            x_indices = np.arange(np.floor(xi - extraction_sigma * wi),
+                np.ceil(xi + (extraction_sigma * wi) + 1)).astype(int)
             clip = np.searchsorted(x_indices, [0, self.shape[1]])
             x_indices = x_indices[clip[0]:clip[1]]
             y_indices = yi * np.ones(x_indices.size, dtype=int)
 
-            gaussian = 1.0/(wi * np.sqrt(2*np.pi)) \
-                * np.exp((x_indices - xi)**2/(2. * wi**2))
-            fluxes[yi] = np.nansum(self.data[y_indices, x_indices] * gaussian)
+            #gaussian = 1.0/(wi * np.sqrt(2*np.pi)) \
+            #    * np.exp((x_indices - xi)**2/(2. * wi**2))
+            fluxes[yi] = np.nansum(self.data[y_indices, x_indices])#* gaussian)
+            #fluxes2[yi] = np.nansum(self.data[y_indices, x_indices] * gaussian)
 
-            raise a
-        raise a
-
+        return fluxes[::-1] # -y = +wavelength
 
     def extract_aperture(self, coefficients, width, discretize="round", 
         **kwargs):
@@ -836,8 +830,8 @@ class ScienceFrame(SpectroscopicFrame):
 
         fig.tight_layout()
 
+        return (avg_x, avg_y, avg_data, fig)
 
-        raise a
 
     def plot_aperture_trace(self, coefficients, widths=0, ax=None, **kwargs):
         """

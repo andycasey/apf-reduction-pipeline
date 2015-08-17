@@ -220,7 +220,7 @@ class CCD(NDData):
 
         # Update the metadata
         self.meta["_overscan_shape"] = (0, 0)
-        self.meta["ROVER"], self.meta["COVER"] = 0, 0
+        self.meta["ROVER"], self.meta["COVER"] = (0, 0)
         self.meta["reduction_log"] = "Overscan corrected."
 
         return self
@@ -251,18 +251,6 @@ class CCD(NDData):
 
             # Normalise to the mode.
             self._data /= Counter(self._data.flatten()).most_common(1)[0][0]
-
-        return self
-
-
-    def apply_flat_field(self, flat_field):
-        """
-        Normalise the data by a given normalised flat field.
-        """
-
-        self._data /= flat_field._data
-        self.meta["HISTORY"] = "Divided by master flat field {}".format(
-            os.path.basename(flat_field.meta["_filename"]))
 
         return self
 

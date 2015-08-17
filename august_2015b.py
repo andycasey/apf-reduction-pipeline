@@ -25,8 +25,8 @@ logger = logging.getLogger("pipeline")
 
 
 # CONFIGURATION
-RAW_DATA_DIR = "../data/20150801/raw/"
-REDUCED_DATA_DIR = "../data/20150801/reduced/"
+RAW_DATA_DIR = "../data/20150805/raw/"
+REDUCED_DATA_DIR = "../data/20150805/reduced/"
 
 CLOBBER = True
 
@@ -192,10 +192,13 @@ if REDUCTION_STEPS.get("TRACE_APERTURES", True):
         pickle.dump((coefficients, tcks), fp, -1)
 
 
-if REDUCTION_STEPS.get("MODEL_SKY", True):
+"""
+if REDUCTION_STEPS.get("FLAT_FIELD", True):
     filename = os.path.join(REDUCED_DATA_DIR, "NarrowFlat-all-apertures.pkl")
     with open(filename, "rb") as fp:
         coefficients, tcks = pickle.load(fp)
+
+
 
     standard_star = pipeline.ScienceFrame.from_filename(
         data.observations["FILENAME"][data.standard_star_frames][0])
@@ -203,52 +206,98 @@ if REDUCTION_STEPS.get("MODEL_SKY", True):
 
     #mask = standard_star.get_inter_order_spacing(coefficients, tcks)
 
-    m = standard_star.model_background(coefficients, tcks)
+    star = pipeline.ScienceFrame.from_filename(
+        data.observations["FILENAME"][data.science_frames][1])
+    star.subtract_overscan()
+
+    wide_flat_field = pipeline.ScienceFrame.from_filename(
+        os.path.join(REDUCED_DATA_DIR, "WideFlat-all-normalised.fits"))
+
+    #mask = wide_flat_field.model_background(coefficients, tcks)
+
+    mask = wide_flat_field.get_inter_order_spacing(coefficients,
+        tcks, aperture_sigma=2)
+
+    x, y, d, f = star.model_background(coefficients, tcks)
+    f.axes[0].set_title("Before flat-fielding")
+
+    star._data[mask] /= wide_flat_field._data[mask]
+
+    x, y, d, f = star.model_background(coefficients, tcks)
+    f.axes[0].set_title("After flat-fielding")
+
     raise a
+"""
 
 
 
 if REDUCTION_STEPS.get("EXTRACT_SCIENCE", True):
 
     # Load the master (wide) flat field.
-    flat_field = pipeline.ccd.CCD.from_filename(os.path.join(REDUCED_DATA_DIR,
-        "WideFlat-all.fits"))
+    wide_flat_field = pipeline.ccd.CCD.from_filename(
+        os.path.join(REDUCED_DATA_DIR, "WideFlat-all-normalised.fits"))
 
-    # Extract the standard.
-    trace_filename = data.observations["FILENAME"][data.standard_star_frames][0]
-
-    trace_image = pipeline.ScienceFrame.from_filename(trace_filename)
-    trace_image.subtract_overscan()
-    trace_image.clean_cosmic_rays()
-
-    trace_image.apply_flat_field(flat_field)
-
-    # [TODO] No background subtraction.
-
+    # Load aperture information.
+    filename = os.path.join(REDUCED_DATA_DIR, "NarrowFlat-all-apertures.pkl")
     with open(filename, "rb") as fp:
-        _, tcks = pickle.load(fp)
+        coefficients, tcks = pickle.load(fp)
 
-    # Re-create spline functions from the tcks
-    aperture_widths = [lambda x: splev(x, tck) for tck in tcks]
+    # For each science frame:
+    # [X] subtract overscan
+    # [X] clean cosmic rays
+    # [X] apply flat field
+    # [X] extract apertures
+    # [X] apply wavelengths
+
+    extract_aperture_sigma = 3
+    targets = set(data.observations["OBJECT"][data.science_frames])
+
+    for target in targets:
+
+        logger.debug("Doing science on {}".format(target))
+
+        N = data.observations["OBJECT"] == target
+        image = data.combine_images(target, clean_cosmic_rays=True if sum(N) > 2 else False)[0]
+        image.writeto(os.path.join(REDUCED_DATA_DIR, "{0}-combined.fits".format(
+            target)), clobber=CLOBBER)
+
+        image = pipeline.ScienceFrame.from_filename(os.path.join(REDUCED_DATA_DIR,
+            "{}-combined.fits".format(target)))
+
+        """
+        image = pipeline.ScienceFrame.from_filename(science_filename)
+        image.subtract_overscan()
+        image.clean_cosmic_rays()
+        """
+
+        # Flat field.
+        mask = image.get_inter_order_spacing(coefficients, tcks,
+            aperture_sigma=extract_aperture_sigma)
+        image._data[mask] /= wide_flat_field._data[mask]
+
+        # Extract science frames.
+        apertures = image.gaussian_extract_apertures(coefficients, tcks)
+
+        # Apply (incorrect) wavelengths.
+        with open("APF_WaveSoln.pickle", "rb") as fp:
+            wavelength_mapping = pickle.load(fp)
+
+        offset = 4
+        for i, (wavelength, flux) \
+        in enumerate(zip(wavelength_mapping, apertures[::-1][offset:])):
+    
+            # Save the order.
+            spectrum = specutils.Spectrum1D(wavelength, flux,
+                header=dict(image._meta))
+            spectrum.save(os.path.join(REDUCED_DATA_DIR, "{0}-es-{1}.fits".format(
+                target, i)))
 
 
-    orders = trace_image.extract_apertures(aperture_position_coefficients,
-        aperture_widths)
 
-
-
-    # Apply some incorrect wavelength mapping...
-
-
-
-    # Find all the science frames that match the decker in the standard.
-
-    # Extract all science frames.
-
-    # Load and apply a wavelength mapping.
-
-    # Save the fits.
-
+        #fig, ax = plt.subplots()
+        #for i in range(len(fluxes)):
+        #    ax.plot(wavelengths[i], fluxes[i], c='k')
+    raise a
     # Stack images.
 
 
